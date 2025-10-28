@@ -1,5 +1,5 @@
-# LMD
-Lip movement detection.
+# SDLM
+Speech detection by lip movement.
 
 - Datasets
 
