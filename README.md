@@ -1,5 +1,5 @@
-# SDLM
-Speech detection by lip movement.
+# VSDLM
+Visual only speech detection by lip movement.
 
 - Datasets
 
