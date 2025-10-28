@@ -10,7 +10,8 @@ Speech detection by lip movement.
     https://zenodo.org/records/3625687
       ```bibtex
       Cooke, M., Barker, J., Cunningham, S., & Shao, X. (2006).
-      The Grid Audio-Visual Speech Corpus (1.0) [Data set]. Zenodo. https://doi.org/10.5281/zenodo.3625687
+      The Grid Audio-Visual Speech Corpus (1.0) [Data set].
+      Zenodo. https://doi.org/10.5281/zenodo.3625687
       ```
   2. Lombard GRID（Audio-Visual Lombard Speech Corpus）
     Contents: 54 speakers x 100 sentences each (50 each for "normal" and "Lombard"). Two perspectives: frontal and side.
@@ -20,7 +21,8 @@ Speech detection by lip movement.
       ```bibtex
       Najwa Alghamdi, Steve Maddock, Ricard Marxer, Jon Barker and Guy J. Brown,
       A corpus of audio-visual Lombard speech with frontal and profile views,
-      The Journal of the Acoustical Society of America 143, EL523 (2018); https://doi.org/10.1121/1.5042758
+      The Journal of the Acoustical Society of America 143, EL523 (2018);
+      https://doi.org/10.1121/1.5042758
       ```
 
 ```
