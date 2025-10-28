@@ -1,5 +1,5 @@
 [project]
-name = "sdlm"
+name = "vsdlm"
 version = "1.0.0"
 description = "Visual only speech detection by lip movement."
 readme = "README.md"
