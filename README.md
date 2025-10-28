@@ -21,3 +21,9 @@ Speech detection by lip movement.
   A corpus of audio-visual Lombard speech with frontal and profile views,
   The Journal of the Acoustical Society of America 143, EL523 (2018); https://doi.org/10.1121/1.5042758
   ```
+
+```
+lombardgrid_{front or side}/{talker}_x_xxxxxx.mov
+
+{dataset:03d}_{talker:04d}_{front or side}_{serial_number:04d}.mov
+```
