@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 # === FAN (Face Alignment Network) ===
 from fan import fan_onnx
+from fan.fan_onnx import Box
 
 """
 Overview:
@@ -34,6 +35,7 @@ Note: MAR definition based on FAN's 68-point Multi-PIE landmark indices (inner m
 """
 
 VIDEO_EXTS = {".mp4", ".mpg", ".mov"}
+TALKER_COLORS = ["#a0a0a0", "#3a78d4", "#3cb371"]
 
 def iter_videos(src_dir: Path, recursive: bool = True) -> Iterable[Path]:
     if recursive:
@@ -43,6 +45,20 @@ def iter_videos(src_dir: Path, recursive: bool = True) -> Iterable[Path]:
 
 def norm2(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(a - b))
+
+def extract_talker_key(base_name: str) -> Optional[str]:
+    parts = base_name.split("_")
+    if len(parts) < 2:
+        return None
+    return f"{parts[0]}_{parts[1]}"
+
+def detect_orientation(base_name: str) -> Optional[str]:
+    lower = base_name.lower()
+    if "_front_" in lower:
+        return "front"
+    if "_side_" in lower:
+        return "side"
+    return None
 
 def resolve_providers(execution_provider: str, cache_dir: Optional[Path] = None) -> List[Any]:
     """Map a provider shortcut to ONNXRuntime provider configuration."""
@@ -96,10 +112,14 @@ class FanMouth:
         )
         self._min_score = float(min_score)
 
-    def mar(self, frame_bgr: np.ndarray) -> Optional[float]:
+    @property
+    def min_score(self) -> float:
+        return self._min_score
+
+    def mar(self, frame_bgr: np.ndarray) -> Tuple[Optional[float], Optional[Box], Optional[np.ndarray]]:
         """
         Compute MAR for the most confident face in the frame.
-        Returns None when no reliable face landmarks are available.
+        Returns a tuple of (MAR, face_box, landmarks); any component may be None if detection fails.
         """
         boxes = self._detector(
             image=frame_bgr,
@@ -110,14 +130,15 @@ class FanMouth:
         )
         face_box = self._select_face_box(boxes)
         if face_box is None:
-            return None
+            return None, face_box, None
 
         landmarks = self._aligner(frame_bgr, [face_box])
         if landmarks.size == 0:
-            return None
-        return self._compute_mar(landmarks[0])
+            return None, face_box, None
+        mar_value = self._compute_mar(landmarks[0])
+        return mar_value, face_box, (landmarks[0] if mar_value is not None else None)
 
-    def _select_face_box(self, boxes: List[Any]) -> Optional[Any]:
+    def _select_face_box(self, boxes: List[Any]) -> Optional[Box]:
         prioritized_classes = [self.HEAD_CLASS_ID, self.FACE_CLASS_ID]
         best_box = None
         for class_id in prioritized_classes:
@@ -205,6 +226,123 @@ def draw_caption(frame: np.ndarray, text: str, color=(255, 255, 255)) -> None:
     # Draw text body
     cv2.putText(frame, text, org, font, scale, color, thickness, cv2.LINE_AA)
 
+def draw_landmark(
+    frame: np.ndarray,
+    landmarks: Optional[np.ndarray],
+    *,
+    color: Tuple[int, int, int] = (0, 255, 0),
+    radius: int = 1,
+    thickness: int = 2,
+    min_score: Optional[float] = None,
+) -> None:
+    if landmarks is None:
+        return
+    if landmarks.ndim != 2 or landmarks.shape[1] < 2:
+        return
+
+    coords = landmarks[:, :2]
+    scores = landmarks[:, 2] if landmarks.shape[1] >= 3 else None
+
+    for idx, (x, y) in enumerate(coords):
+        if not np.isfinite(x) or not np.isfinite(y):
+            continue
+        if scores is not None and min_score is not None:
+            if idx < len(scores) and scores[idx] < min_score:
+                continue
+        center = (int(round(float(x))), int(round(float(y))))
+        cv2.circle(frame, center, radius, color, thickness, cv2.LINE_AA)
+
+def draw_bbox(frame: np.ndarray, bbox: Optional[Box], color=(255, 255, 255)) -> None:
+    if bbox is None:
+        return
+    cv2.rectangle(frame, (bbox.x1, bbox.y1), (bbox.x2, bbox.y2), (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.rectangle(frame, (bbox.x1, bbox.y1), (bbox.x2, bbox.y2), color, 1, cv2.LINE_AA)
+
+def render_talker_summary(
+    talker_key: str,
+    counts: Dict[str, int],
+    output_dir: Path,
+) -> Path:
+    talker_dir = Path(output_dir)
+    talker_dir.mkdir(parents=True, exist_ok=True)
+    closed_total = counts.get("closed", 0)
+    open_total = counts.get("open", 0)
+    unknown_total = counts.get("unknown", 0)
+    talker_png_path = talker_dir / (
+        f"{talker_key}_t_c_{closed_total:06d}_o_{open_total:06d}_unk_{unknown_total:06d}.png"
+    )
+
+    fig_talker, ax_talker = plt.subplots(figsize=(5, 3.5))
+    categories = ["Unknown", "Mouth closed", "Mouth open"]
+    values = [unknown_total, closed_total, open_total]
+    bars = ax_talker.bar(categories, values, color=TALKER_COLORS)
+    ax_talker.set_ylabel("Frame count")
+    ax_talker.set_title(f"Talker {talker_key}")
+    max_value = max(values) if values else 0
+    ax_talker.set_ylim(0, max_value * 1.15 if max_value > 0 else 1.0)
+
+    for bar, value in zip(bars, values):
+        ax_talker.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            value + (max_value * 0.03 if max_value > 0 else 0.05),
+            f"{value}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
+    plt.tight_layout()
+    fig_talker.savefig(talker_png_path)
+    plt.close(fig_talker)
+    return talker_png_path
+
+def render_talker_orientation_summary(
+    talker_key: str,
+    orientation_counts: Dict[str, Dict[str, int]],
+    output_dir: Path,
+) -> Optional[Path]:
+    front_counts = orientation_counts.get("front")
+    side_counts = orientation_counts.get("side")
+    if not front_counts or not side_counts:
+        return None
+
+    front_total = sum(front_counts.values())
+    side_total = sum(side_counts.values())
+    if front_total <= 0 or side_total <= 0:
+        return None
+
+    talker_dir = Path(output_dir)
+    talker_dir.mkdir(parents=True, exist_ok=True)
+    png_path = talker_dir / f"{talker_key}_t_front_side_summary.png"
+
+    categories = ["Unknown", "Mouth closed", "Mouth open"]
+    orientations = [("Front", front_counts), ("Side", side_counts)]
+    fig, axes = plt.subplots(1, len(orientations), figsize=(5 * len(orientations), 3.5))
+    if len(orientations) == 1:
+        axes = [axes]
+
+    for ax, (label, counts) in zip(axes, orientations):
+        values = [counts.get("unknown", 0), counts.get("closed", 0), counts.get("open", 0)]
+        bars = ax.bar(categories, values, color=TALKER_COLORS)
+        ax.set_ylabel("Frame count")
+        ax.set_title(f"{label}")
+        max_value = max(values) if values else 0
+        ax.set_ylim(0, max_value * 1.15 if max_value > 0 else 1.0)
+        for bar, value in zip(bars, values):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                value + (max_value * 0.03 if max_value > 0 else 0.05),
+                f"{value}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
+
+    plt.tight_layout()
+    fig.savefig(png_path)
+    plt.close(fig)
+    return png_path
+
 def process_video(
     video_path: Path,
     mouth_estimator: FanMouth,
@@ -261,6 +399,8 @@ def process_video(
 
     frame_mars: List[Optional[float]] = []
     frames_bgr: List[np.ndarray] = []
+    frame_face_bboxes: List[Optional[Box]] = []
+    frame_landmarks: List[Optional[np.ndarray]] = []
 
     # First pass: compute MAR and store frames
     idx = 0
@@ -272,9 +412,11 @@ def process_video(
         if (out_w, out_h) != (orig_w, orig_h):
             frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
 
-        mar = mouth_estimator.mar(frame)
+        mar, face_box, landmarks = mouth_estimator.mar(frame)
         frame_mars.append(mar)
         frames_bgr.append(frame)
+        frame_face_bboxes.append(face_box)
+        frame_landmarks.append(landmarks)
 
         idx += 1
         if total > 0 and idx % 200 == 0:
@@ -320,6 +462,8 @@ def process_video(
     # Second pass: draw captions and write frames
     for i, frame in enumerate(frames_bgr):
         mouth_label = labels[i]
+        box = frame_face_bboxes[i]
+        landmarks = frame_landmarks[i] if i < len(frame_landmarks) else None
         if mouth_label == 2:
             text = "mouth open"
             color = (60, 220, 60)
@@ -329,7 +473,9 @@ def process_video(
         else:
             text = "unknown"
             color = (200, 200, 200)
+        draw_landmark(frame, landmarks, color=color, min_score=mouth_estimator.min_score)
         draw_caption(frame, text, color=color)
+        draw_bbox(frame, box, color=color)
         writer.write(frame)
 
     writer.release()
@@ -411,16 +557,12 @@ def main():
             videos.append((vp, target_dir))
 
     processed_results: List[Dict[str, Any]] = []
+    talker_summaries: Dict[str, Dict[str, Any]] = {}
     progress_bar: Optional[tqdm] = None
-    iterable: Iterable[Tuple[Path, Path]]
-    if args.src_file:
-        iterable = videos
-    else:
-        progress_bar = tqdm(videos, desc="Videos", unit="video", dynamic_ncols=True)
-        iterable = progress_bar
+    if (not args.src_file) and videos:
+        progress_bar = tqdm(total=len(videos), desc="Videos", unit="video", dynamic_ncols=True)
 
-    for item in iterable:
-        vp, out_dir = item
+    for idx, (vp, out_dir) in enumerate(videos):
         if progress_bar is not None:
             progress_bar.set_postfix_str(vp.name, refresh=False)
         try:
@@ -435,8 +577,61 @@ def main():
                 output_dir=out_dir,
             )
             processed_results.append({"video": str(vp), "counts": counts})
+            talker_key = extract_talker_key(vp.stem)
+            if talker_key:
+                summary = talker_summaries.setdefault(
+                    talker_key,
+                    {
+                        "counts": {"unknown": 0, "closed": 0, "open": 0},
+                        "output_dir": out_dir,
+                        "finalized": False,
+                        "orientation_counts": {},
+                        "orientation_finalized": False,
+                    },
+                )
+                scounts = summary["counts"]
+                scounts["unknown"] += counts.get("unknown", 0)
+                scounts["closed"] += counts.get("closed", 0)
+                scounts["open"] += counts.get("open", 0)
+                summary["output_dir"] = out_dir
+
+                orientation = detect_orientation(vp.stem)
+                if orientation:
+                    orientation_counts = summary.setdefault("orientation_counts", {})
+                    orient_counts = orientation_counts.setdefault(
+                        orientation,
+                        {"unknown": 0, "closed": 0, "open": 0},
+                    )
+                    orient_counts["unknown"] += counts.get("unknown", 0)
+                    orient_counts["closed"] += counts.get("closed", 0)
+                    orient_counts["open"] += counts.get("open", 0)
+
+                next_talker_key = (
+                    extract_talker_key(videos[idx + 1][0].stem)
+                    if idx + 1 < len(videos)
+                    else None
+                )
+                if talker_key != next_talker_key and not summary.get("finalized", False):
+                    png_path = render_talker_summary(
+                        talker_key,
+                        scounts,
+                        summary.get("output_dir", output_root),
+                    )
+                    summary["finalized"] = True
+                    print(f"   - Talker summary saved to: {png_path}")
+                    orientation_png = render_talker_orientation_summary(
+                        talker_key,
+                        summary.get("orientation_counts", {}),
+                        summary.get("output_dir", output_root),
+                    )
+                    if orientation_png:
+                        summary["orientation_finalized"] = True
+                        print(f"     * Orientation summary saved to: {orientation_png}")
         except Exception as e:
             print(f"[ERROR] {vp}: {e}")
+        finally:
+            if progress_bar is not None:
+                progress_bar.update(1)
 
     if progress_bar is not None:
         progress_bar.close()
@@ -557,6 +752,26 @@ def main():
     fig.savefig(hist_output_path)
     plt.close(fig)
     print(f"   - Histogram image saved to: {hist_output_path}")
+
+    for talker_key, summary in talker_summaries.items():
+        if not summary.get("finalized"):
+            png_path = render_talker_summary(
+                talker_key,
+                summary["counts"],
+                summary.get("output_dir", output_root),
+            )
+            summary["finalized"] = True
+            print(f"   - Talker summary saved to: {png_path}")
+
+        if not summary.get("orientation_finalized"):
+            orientation_png = render_talker_orientation_summary(
+                talker_key,
+                summary.get("orientation_counts", {}),
+                summary.get("output_dir", output_root),
+            )
+            summary["orientation_finalized"] = True
+            if orientation_png:
+                print(f"     * Orientation summary saved to: {orientation_png}")
 
 if __name__ == "__main__":
     main()
