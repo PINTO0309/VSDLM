@@ -343,6 +343,55 @@ def render_talker_orientation_summary(
     plt.close(fig)
     return png_path
 
+def compose_and_save_summary(
+    talker_png_path: Path,
+    orientation_png_path: Optional[Path] = None,
+) -> Path:
+    talker_img = cv2.imread(str(talker_png_path), cv2.IMREAD_COLOR)
+    if talker_img is None:
+        return talker_png_path
+
+    if orientation_png_path and orientation_png_path.exists():
+        orientation_img = cv2.imread(str(orientation_png_path), cv2.IMREAD_COLOR)
+        if orientation_img is not None:
+            top_h, top_w = talker_img.shape[:2]
+            bottom_h, bottom_w = orientation_img.shape[:2]
+            combined_width = max(top_w, bottom_w)
+
+            def pad_to_width(img: np.ndarray, width: int) -> np.ndarray:
+                h, w = img.shape[:2]
+                if w == width:
+                    return img
+                if w > width:
+                    scale = width / w
+                    resized = cv2.resize(img, (width, int(round(h * scale))), interpolation=cv2.INTER_AREA)
+                    return resized
+                pad_total = width - w
+                pad_left = pad_total // 2
+                pad_right = pad_total - pad_left
+                return cv2.copyMakeBorder(
+                    img,
+                    0,
+                    0,
+                    pad_left,
+                    pad_right,
+                    cv2.BORDER_CONSTANT,
+                    value=(255, 255, 255),
+                )
+
+            top_img = pad_to_width(talker_img, combined_width)
+            bottom_img = pad_to_width(orientation_img, combined_width)
+            combined_img = np.vstack([top_img, bottom_img])
+            cv2.imwrite(str(talker_png_path), combined_img)
+            try:
+                orientation_png_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return talker_png_path
+
+    cv2.imwrite(str(talker_png_path), talker_img)
+    return talker_png_path
+
 def process_video(
     video_path: Path,
     mouth_estimator: FanMouth,
@@ -612,21 +661,26 @@ def main():
                     else None
                 )
                 if talker_key != next_talker_key and not summary.get("finalized", False):
-                    png_path = render_talker_summary(
+                    talker_png_path = render_talker_summary(
                         talker_key,
                         scounts,
                         summary.get("output_dir", output_root),
                     )
-                    summary["finalized"] = True
-                    print(f"   - Talker summary saved to: {png_path}")
                     orientation_png = render_talker_orientation_summary(
                         talker_key,
                         summary.get("orientation_counts", {}),
                         summary.get("output_dir", output_root),
                     )
+                    final_path = compose_and_save_summary(
+                        talker_png_path,
+                        orientation_png,
+                    )
+                    summary["finalized"] = True
+                    summary["orientation_finalized"] = bool(orientation_png)
+                    message = "   - Talker summary saved to: {}".format(final_path)
                     if orientation_png:
-                        summary["orientation_finalized"] = True
-                        print(f"     * Orientation summary saved to: {orientation_png}")
+                        message += " (front/side combined)"
+                    print(message)
         except Exception as e:
             print(f"[ERROR] {vp}: {e}")
         finally:
@@ -754,24 +808,26 @@ def main():
     print(f"   - Histogram image saved to: {hist_output_path}")
 
     for talker_key, summary in talker_summaries.items():
-        if not summary.get("finalized"):
-            png_path = render_talker_summary(
-                talker_key,
-                summary["counts"],
-                summary.get("output_dir", output_root),
-            )
-            summary["finalized"] = True
-            print(f"   - Talker summary saved to: {png_path}")
-
-        if not summary.get("orientation_finalized"):
-            orientation_png = render_talker_orientation_summary(
-                talker_key,
-                summary.get("orientation_counts", {}),
-                summary.get("output_dir", output_root),
-            )
-            summary["orientation_finalized"] = True
-            if orientation_png:
-                print(f"     * Orientation summary saved to: {orientation_png}")
+        talker_png_path = render_talker_summary(
+            talker_key,
+            summary["counts"],
+            summary.get("output_dir", output_root),
+        )
+        orientation_png = render_talker_orientation_summary(
+            talker_key,
+            summary.get("orientation_counts", {}),
+            summary.get("output_dir", output_root),
+        )
+        final_path = compose_and_save_summary(
+            talker_png_path,
+            orientation_png,
+        )
+        summary["finalized"] = True
+        summary["orientation_finalized"] = bool(orientation_png)
+        message = f"   - Talker summary saved to: {final_path}"
+        if orientation_png:
+            message += " (front/side combined)"
+        print(message)
 
 if __name__ == "__main__":
     main()
