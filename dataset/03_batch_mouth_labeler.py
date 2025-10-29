@@ -356,7 +356,7 @@ def main():
     ap.add_argument("--detection_model", type=str, default=None, help="Path to DEIMv2 ONNX model. Default: fan/deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx")
     ap.add_argument("--alignment_model", type=str, default=None, help="Path to FAN ONNX model. Default: fan/2dfan4_1x3x256x256.onnx")
     ap.add_argument("--execution_provider", type=str, choices=["cpu", "cuda", "tensorrt"], default="tensorrt", help="ONNXRuntime execution provider (default: tensorrt)")
-    ap.add_argument("--min_kpt_score", type=float, default=0.35, help="Minimum keypoint confidence required to accept MAR per frame.")
+    ap.add_argument("--min_kpt_score", type=float, default=0.15, help="Minimum keypoint confidence required to accept MAR per frame.")
     args = ap.parse_args()
 
     script_dir = Path(__file__).resolve().parent

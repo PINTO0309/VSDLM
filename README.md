@@ -31,14 +31,16 @@ uv run python dataset/03_batch_mouth_labeler.py \
 --src_file dataset/lombardgrid/001_0002_front_002097.mov \
 --output_dir dataset/output_lombardgrid \
 --threshold_front 0.25 \
---threshold_side 0.55
+--threshold_side 0.55 \
+--min_kpt_score 0.15
 
 # Process videos in a folder in bulk
 uv run python dataset/03_batch_mouth_labeler.py \
 --src_dir dataset/lombardgrid \
 --output_dir dataset/output_lombardgrid \
 --threshold_front 0.25 \
---threshold_side 0.55
+--threshold_side 0.55 \
+--min_kpt_score 0.15
 ```
 
 ## Acknowledgements
