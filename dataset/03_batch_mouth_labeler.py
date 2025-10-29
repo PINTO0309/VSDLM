@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import math
-import os
 from pathlib import Path
 from typing import List, Tuple, Optional, Iterable, Dict, Any
 
@@ -13,22 +11,22 @@ import cv2
 import numpy as np
 import pandas as pd
 
-# === MediaPipe Face Mesh ===
-import mediapipe as mp
+# === FAN (Face Alignment Network) ===
+from fan import fan_onnx
 
 """
 Overview:
 - Recursively scan the specified directory for .mp4/.mpg/.mov files
 - For each video:
-  * Use MediaPipe FaceMesh to extract mouth landmarks for every frame
+  * Use a FAN (Face Alignment Network) ONNX model to extract 68 Multi-PIE landmarks for every frame
   * Compute MAR (Mouth Aspect Ratio) and assign labels 0/1/2 (unknown/closed/open) using the threshold
   * Output <basename>_c_xxxxxx_o_xxxxxx_unk_xxxxxx.csv (frame_index, mouth_label, MAR)
   * Output <basename>_output_c_xxxxxx_o_xxxxxx_unk_xxxxxx.mp4 (renders captions "mouth open"/"mouth closed")
 
-Note: MAR definition based on MediaPipe FaceMesh landmark indices
-    - Horizontal: 61 (right mouth corner) and 291 (left mouth corner)
-    - Vertical: 13 (upper inner lip center) and 14 (lower inner lip center)
-    MAR = ||13-14|| / ||61-291||
+Note: MAR definition based on FAN's 68-point Multi-PIE landmark indices (inner mouth)
+    - Horizontal: 60 (left inner lip corner) and 64 (right inner lip corner)
+    - Vertical: averaged distances between (61,67), (63,65), (62,66)
+    MAR = (||61-67|| + ||63-65|| + ||62-66||) / (2 * ||60-64||)
 
     The ratio is normalized to remain resolution-independent.
 """
@@ -44,46 +42,122 @@ def iter_videos(src_dir: Path, recursive: bool = True) -> Iterable[Path]:
 def norm2(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(a - b))
 
-class FaceMeshMouth:
-    def __init__(self):
-        self._mp_face_mesh = mp.solutions.face_mesh
-        # refine_landmarks=True improves capture accuracy around the lips
-        self._fm = self._mp_face_mesh.FaceMesh(
-            static_image_mode=False,
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
-        )
+def resolve_providers(execution_provider: str, cache_dir: Optional[Path] = None) -> List[Any]:
+    """Map a provider shortcut to ONNXRuntime provider configuration."""
+    if execution_provider == "cpu":
+        return ["CPUExecutionProvider"]
+    if execution_provider == "cuda":
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    if execution_provider == "tensorrt":
+        cache_root = Path(cache_dir or ".").resolve()
+        return [
+            (
+                "TensorrtExecutionProvider",
+                {
+                    "trt_engine_cache_enable": True,
+                    "trt_engine_cache_path": str(cache_root),
+                    "trt_fp16_enable": True,
+                },
+            ),
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+    raise ValueError(f"Unsupported execution provider: {execution_provider}")
 
-        # MediaPipe Face Mesh landmark indices
-        self.idx_h_left = 291  # left mouth corner
-        self.idx_h_right = 61  # right mouth corner
-        self.idx_v_top = 13    # upper inner lip center
-        self.idx_v_bottom = 14 # lower inner lip center
+class FanMouth:
+    """Mouth MAR estimation backed by DEIMv2 detector + FAN face alignment."""
+
+    HEAD_CLASS_ID = 7
+    FACE_CLASS_ID = 16
+    INNER_MOUTH_INDICES = {
+        "left": 60,
+        "right": 64,
+        "top": (61, 62, 63),
+        "bottom": (67, 66, 65),
+    }
+
+    def __init__(
+        self,
+        detection_model: Path,
+        alignment_model: Path,
+        providers: Optional[List[Any]] = None,
+        min_score: float = 0.35,
+    ) -> None:
+        provider_list = providers or ["CPUExecutionProvider"]
+        self._detector = fan_onnx.DEIMv2(
+            model_path=str(detection_model),
+            providers=provider_list,
+        )
+        self._aligner = fan_onnx.FAN(
+            model_path=str(alignment_model),
+            providers=provider_list,
+        )
+        self._min_score = float(min_score)
 
     def mar(self, frame_bgr: np.ndarray) -> Optional[float]:
-        """Return MAR; returns None when no face is detected."""
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        res = self._fm.process(rgb)
-        if not res.multi_face_landmarks:
+        """
+        Compute MAR for the most confident face in the frame.
+        Returns None when no reliable face landmarks are available.
+        """
+        boxes = self._detector(
+            image=frame_bgr,
+            disable_generation_identification_mode=True,
+            disable_gender_identification_mode=True,
+            disable_left_and_right_hand_identification_mode=True,
+            disable_headpose_identification_mode=True,
+        )
+        face_box = self._select_face_box(boxes)
+        if face_box is None:
             return None
 
-        lm = res.multi_face_landmarks[0].landmark
-        h, w = frame_bgr.shape[:2]
+        landmarks = self._aligner(frame_bgr, [face_box])
+        if landmarks.size == 0:
+            return None
+        return self._compute_mar(landmarks[0])
 
-        # Convert landmarks to pixel coordinates
-        p_left = np.array([lm[self.idx_h_left].x * w, lm[self.idx_h_left].y * h], dtype=np.float32)
-        p_right = np.array([lm[self.idx_h_right].x * w, lm[self.idx_h_right].y * h], dtype=np.float32)
-        p_top = np.array([lm[self.idx_v_top].x * w, lm[self.idx_v_top].y * h], dtype=np.float32)
-        p_bottom = np.array([lm[self.idx_v_bottom].x * w, lm[self.idx_v_bottom].y * h], dtype=np.float32)
+    def _select_face_box(self, boxes: List[Any]) -> Optional[Any]:
+        prioritized_classes = [self.HEAD_CLASS_ID, self.FACE_CLASS_ID]
+        best_box = None
+        for class_id in prioritized_classes:
+            for box in boxes:
+                if box.classid != class_id:
+                    continue
+                if best_box is None or box.score > best_box.score:
+                    best_box = box
+            if best_box is not None:
+                break
+        return best_box
 
-        horiz = norm2(p_left, p_right)
-        vert = norm2(p_top, p_bottom)
+    def _compute_mar(self, landmarks: np.ndarray) -> Optional[float]:
+        if landmarks.shape[0] < 68:
+            return None
 
+        scores = landmarks[:, 2] if landmarks.shape[1] >= 3 else None
+        required = (
+            [self.INNER_MOUTH_INDICES["left"], self.INNER_MOUTH_INDICES["right"]]
+            + list(self.INNER_MOUTH_INDICES["top"])
+            + list(self.INNER_MOUTH_INDICES["bottom"])
+        )
+        if scores is not None:
+            for idx in required:
+                if scores[idx] < self._min_score:
+                    return None
+
+        xy = landmarks[:, :2].astype(np.float32)
+        left_idx = self.INNER_MOUTH_INDICES["left"]
+        right_idx = self.INNER_MOUTH_INDICES["right"]
+        top_indices = self.INNER_MOUTH_INDICES["top"]
+        bottom_indices = self.INNER_MOUTH_INDICES["bottom"]
+
+        horiz = norm2(xy[left_idx], xy[right_idx])
         if horiz <= 1e-6:
             return None
-        return vert / horiz
+
+        verticals = [
+            norm2(xy[t], xy[b]) for t, b in zip(top_indices, bottom_indices)
+        ]
+        mar = float(sum(verticals) / (2.0 * horiz))
+        return mar if np.isfinite(mar) else None
 
 def moving_average(x: List[Optional[float]], win: int) -> List[Optional[float]]:
     """Moving average that ignores None values; returns None when the window has no valid value."""
@@ -131,7 +205,8 @@ def draw_caption(frame: np.ndarray, text: str, color=(255, 255, 255)) -> None:
 
 def process_video(
     video_path: Path,
-    threshold: float = 0.6,
+    mouth_estimator: FanMouth,
+    threshold: float = 0.35,
     smooth_win: int = 5,
     downscale: Optional[int] = None,
     output_fps: Optional[float] = None,
@@ -175,8 +250,6 @@ def process_video(
     fourcc = pick_codec_for_mp4()
     base_name = video_path.stem
 
-    fm = FaceMeshMouth()
-
     frame_mars: List[Optional[float]] = []
     frames_bgr: List[np.ndarray] = []
 
@@ -190,7 +263,7 @@ def process_video(
         if (out_w, out_h) != (orig_w, orig_h):
             frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
 
-        mar = fm.mar(frame)
+        mar = mouth_estimator.mar(frame)
         frame_mars.append(mar)
         frames_bgr.append(frame)
 
@@ -262,17 +335,41 @@ def process_video(
     return csv_path, out_video_path, counts
 
 def main():
-    ap = argparse.ArgumentParser(description="Batch mouth open/closed labeling (MediaPipe + MAR)")
+    ap = argparse.ArgumentParser(description="Batch mouth open/closed labeling (FAN + MAR)")
     src_group = ap.add_mutually_exclusive_group(required=True)
     src_group.add_argument("--src_dir", type=str, help="Input directory (search recursively)")
     src_group.add_argument("--src_file", type=str, help="Process single video file")
     ap.add_argument("--no_recursive", action="store_true", help="Disable recursive search")
-    ap.add_argument("--threshold", type=float, default=0.05, help="MAR threshold for 'open'")
+    ap.add_argument("--threshold", type=float, default=0.35, help="MAR threshold for 'open'")
     ap.add_argument("--smooth_win", type=int, default=1, help="Moving average window on MAR (frames). 1=off")
     ap.add_argument("--downscale_long_edge", type=int, default=None, help="Downscale long edge (e.g., 960). None=original")
     ap.add_argument("--output_fps", type=float, default=None, help="Override output video FPS. None=source FPS")
     ap.add_argument("--output_dir", type=str, default="output", help="Directory to store output CSV and videos")
+    ap.add_argument("--detection_model", type=str, default=None, help="Path to DEIMv2 ONNX model. Default: fan/deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx")
+    ap.add_argument("--alignment_model", type=str, default=None, help="Path to FAN ONNX model. Default: fan/2dfan4_1x3x256x256.onnx")
+    ap.add_argument("--execution_provider", type=str, choices=["cpu", "cuda", "tensorrt"], default="tensorrt", help="ONNXRuntime execution provider (default: tensorrt)")
+    ap.add_argument("--min_kpt_score", type=float, default=0.35, help="Minimum keypoint confidence required to accept MAR per frame.")
     args = ap.parse_args()
+
+    script_dir = Path(__file__).resolve().parent
+    default_detection_model = script_dir.parent / "fan" / "deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx"
+    default_alignment_model = script_dir.parent / "fan" / "2dfan4_1x3x256x256.onnx"
+
+    detection_model_path = (Path(args.detection_model).expanduser() if args.detection_model else default_detection_model).resolve()
+    alignment_model_path = (Path(args.alignment_model).expanduser() if args.alignment_model else default_alignment_model).resolve()
+
+    if not detection_model_path.exists():
+        raise FileNotFoundError(f"Detection model not found: {detection_model_path}")
+    if not alignment_model_path.exists():
+        raise FileNotFoundError(f"Alignment model not found: {alignment_model_path}")
+
+    providers = resolve_providers(args.execution_provider, detection_model_path.parent)
+    mouth_estimator = FanMouth(
+        detection_model=detection_model_path,
+        alignment_model=alignment_model_path,
+        providers=providers,
+        min_score=args.min_kpt_score,
+    )
 
     output_root = Path(args.output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -309,6 +406,7 @@ def main():
         try:
             _, _, counts = process_video(
                 vp,
+                mouth_estimator=mouth_estimator,
                 threshold=args.threshold,
                 smooth_win=args.smooth_win,
                 downscale=args.downscale_long_edge,
