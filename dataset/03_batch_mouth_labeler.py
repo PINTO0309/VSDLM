@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 # === FAN (Face Alignment Network) ===
 from fan import fan_onnx
@@ -221,8 +222,6 @@ def process_video(
     - downscale: constrain the longer edge to this size (e.g., 960). None keeps the original size.
     - output_fps: output video FPS (None keeps the source FPS)
     """
-    print(f"[INFO] Processing: {video_path}")
-
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Failed to open: {video_path}")
@@ -340,8 +339,6 @@ def process_video(
         "open": open_count,
         "total_frames": len(labels),
     }
-    print(f"  -> CSV:  {csv_path.name}")
-    print(f"  -> Video:{out_video_path.name}")
     return csv_path, out_video_path, counts
 
 def main():
@@ -392,12 +389,14 @@ def main():
         if video_path.suffix.lower() not in VIDEO_EXTS:
             raise ValueError(f"Unsupported file type: {video_path.suffix}")
         videos = [(video_path, output_root)]
-        print(f"[INFO] Processing single video: {video_path.name}")
     else:
         src = Path(args.src_dir).expanduser().resolve()
         if not src.exists():
             raise FileNotFoundError(f"Not found: {src}")
-        collected = list(iter_videos(src, recursive=(not args.no_recursive)))
+        collected = sorted(
+            iter_videos(src, recursive=(not args.no_recursive)),
+            key=lambda p: p.name.lower(),
+        )
         if not collected:
             print("[WARN] No videos found (.mp4/.mpg/.mov).")
             return
@@ -410,10 +409,20 @@ def main():
             target_dir = output_root / rel_parent
             target_dir.mkdir(parents=True, exist_ok=True)
             videos.append((vp, target_dir))
-        print(f"[INFO] Found {len(videos)} videos.")
 
     processed_results: List[Dict[str, Any]] = []
-    for vp, out_dir in videos:
+    progress_bar: Optional[tqdm] = None
+    iterable: Iterable[Tuple[Path, Path]]
+    if args.src_file:
+        iterable = videos
+    else:
+        progress_bar = tqdm(videos, desc="Videos", unit="video")
+        iterable = progress_bar
+
+    for item in iterable:
+        vp, out_dir = item
+        if progress_bar is not None:
+            progress_bar.set_postfix_str(vp.name, refresh=False)
         try:
             _, _, counts = process_video(
                 vp,
@@ -428,6 +437,9 @@ def main():
             processed_results.append({"video": str(vp), "counts": counts})
         except Exception as e:
             print(f"[ERROR] {vp}: {e}")
+
+    if progress_bar is not None:
+        progress_bar.close()
 
     if not processed_results:
         print("[WARN] No videos processed successfully.")
