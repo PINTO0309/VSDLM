@@ -30,3 +30,9 @@ lombardgrid_{front or side}/{talker}_x_xxxxxx.mov
 
 {dataset:03d}_{talker:04d}_{front or side}_{serial_number:04d}.mov
 ```
+
+## Acknowledgements
+
+1. https://github.com/hhj1897/face_alignment MIT license
+2. https://github.com/hhj1897/face_detection MIT license
+3. https://github.com/PINTO0309/Face_Mask_Augmentation MIT license
