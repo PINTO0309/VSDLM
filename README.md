@@ -26,18 +26,19 @@ Visual only speech detection by lip movement.
       ```
 
 ```bash
-# For front - MAR threshold=0.25
+# Single file
 uv run python dataset/03_batch_mouth_labeler.py \
 --src_file dataset/lombardgrid/001_0002_front_002097.mov \
---output_dir dataset/output \
---threshold 0.25
-```
-```bash
-# For side - MAR threshold=0.55
+--output_dir dataset/output_lombardgrid \
+--threshold_front 0.25 \
+--threshold_side 0.55
+
+# Process videos in a folder in bulk
 uv run python dataset/03_batch_mouth_labeler.py \
---src_file dataset/lombardgrid/001_0002_side_007387.mov \
---output_dir dataset/output \
---threshold 0.55
+--src_dir dataset/lombardgrid \
+--output_dir dataset/output_lombardgrid \
+--threshold_front 0.25 \
+--threshold_side 0.55
 ```
 
 ## Acknowledgements

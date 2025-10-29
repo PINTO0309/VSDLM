@@ -20,6 +20,7 @@ Overview:
 - For each video:
   * Use a FAN (Face Alignment Network) ONNX model to extract 68 Multi-PIE landmarks for every frame
   * Compute MAR (Mouth Aspect Ratio) and assign labels 0/1/2 (unknown/closed/open) using the threshold
+    (front/side thresholds chosen automatically by `_front_`/`_side_` in filename)
   * Output <basename>_c_xxxxxx_o_xxxxxx_unk_xxxxxx.csv (frame_index, mouth_label, MAR)
   * Output <basename>_output_c_xxxxxx_o_xxxxxx_unk_xxxxxx.mp4 (renders captions "mouth open"/"mouth closed")
 
@@ -206,7 +207,8 @@ def draw_caption(frame: np.ndarray, text: str, color=(255, 255, 255)) -> None:
 def process_video(
     video_path: Path,
     mouth_estimator: FanMouth,
-    threshold: float = 0.35,
+    threshold_front: float = 0.35,
+    threshold_side: float = 0.35,
     smooth_win: int = 5,
     downscale: Optional[int] = None,
     output_fps: Optional[float] = None,
@@ -214,7 +216,7 @@ def process_video(
 ) -> Tuple[Path, Path, Dict[str, int]]:
     """
     Process a single video and return (csv_path, output_video_path, counts).
-    - threshold: MAR > threshold yields mouth_label=2 (open)
+    - threshold_front/threshold_side: orientation-specific MAR thresholds for mouth_label
     - smooth_win: moving average window size in frames (1 disables smoothing)
     - downscale: constrain the longer edge to this size (e.g., 960). None keeps the original size.
     - output_fps: output video FPS (None keeps the source FPS)
@@ -249,6 +251,14 @@ def process_video(
 
     fourcc = pick_codec_for_mp4()
     base_name = video_path.stem
+    base_name_lower = base_name.lower()
+    # Choose per-orientation threshold based on filename hints
+    if "_side_" in base_name_lower:
+        selected_threshold = threshold_side
+    elif "_front_" in base_name_lower:
+        selected_threshold = threshold_front
+    else:
+        selected_threshold = threshold_front
 
     frame_mars: List[Optional[float]] = []
     frames_bgr: List[np.ndarray] = []
@@ -283,7 +293,7 @@ def process_video(
         if mar is None:
             label = 0  # unknown
         else:
-            label = 2 if mar > threshold else 1
+            label = 2 if mar > selected_threshold else 1
         labels.append(label)
         rows.append(
             {
@@ -340,7 +350,8 @@ def main():
     src_group.add_argument("--src_dir", type=str, help="Input directory (search recursively)")
     src_group.add_argument("--src_file", type=str, help="Process single video file")
     ap.add_argument("--no_recursive", action="store_true", help="Disable recursive search")
-    ap.add_argument("--threshold", type=float, default=0.35, help="MAR threshold for 'open'")
+    ap.add_argument("--threshold_front", type=float, default=0.25, help="MAR threshold for 'open' when filename contains '_front_'")
+    ap.add_argument("--threshold_side", type=float, default=0.55, help="MAR threshold for 'open' when filename contains '_side_'")
     ap.add_argument("--smooth_win", type=int, default=1, help="Moving average window on MAR (frames). 1=off")
     ap.add_argument("--downscale_long_edge", type=int, default=None, help="Downscale long edge (e.g., 960). None=original")
     ap.add_argument("--output_fps", type=float, default=None, help="Override output video FPS. None=source FPS")
@@ -407,7 +418,8 @@ def main():
             _, _, counts = process_video(
                 vp,
                 mouth_estimator=mouth_estimator,
-                threshold=args.threshold,
+                threshold_front=args.threshold_front,
+                threshold_side=args.threshold_side,
                 smooth_win=args.smooth_win,
                 downscale=args.downscale_long_edge,
                 output_fps=args.output_fps,
