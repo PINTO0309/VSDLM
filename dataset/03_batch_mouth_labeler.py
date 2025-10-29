@@ -416,7 +416,7 @@ def main():
     if args.src_file:
         iterable = videos
     else:
-        progress_bar = tqdm(videos, desc="Videos", unit="video")
+        progress_bar = tqdm(videos, desc="Videos", unit="video", dynamic_ncols=True)
         iterable = progress_bar
 
     for item in iterable:
