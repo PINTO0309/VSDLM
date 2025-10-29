@@ -26,6 +26,9 @@ Visual only speech detection by lip movement.
       ```
 
 ```bash
+./dataset/01_rename_lombardgrid.sh
+```
+```bash
 # Single file
 uv run python dataset/03_batch_mouth_labeler.py \
 --src_file dataset/lombardgrid/001_0002_front_002097.mov \
@@ -40,6 +43,50 @@ uv run python dataset/03_batch_mouth_labeler.py \
 --output_dir dataset/output_lombardgrid \
 --threshold_front 0.25 \
 --threshold_side 0.55 \
+--min_kpt_score 0.15
+```
+```
+=== Processing Summary ===
++---+-------------------------------+--------+
+| # | Description                   |  Value |
++---+-------------------------------+--------+
+| 1 | Videos without unknown frames |  10208 |
+| 2 | Videos with unknown frames    |    568 |
++---+-------------------------------+--------+
+| 3 | Total processed videos        |  10776 |
++---+-------------------------------+--------+
+
++---+-------------------------------+--------+
+| # | Description                   |  Value |
++---+-------------------------------+--------+
+| 4 | Total unknown frames          |   6340 |
+| 5 | Total mouth closed frames     | 200749 |
+| 6 | Total mouth open frames       | 455480 |
++---+-------------------------------+--------+
+| 7 | Total frames                  | 662569 |
++---+-------------------------------+--------+
+8. Histogram (dataset-wide ratios)
+   - Unknown      | #                                        |   1.0% (6340)
+   - Mouth closed | ############                             |  30.3% (200749)
+   - Mouth open   | ###########################              |  68.7% (455480)
+```
+
+```bash
+./dataset/02_rename_grid_audio_visual.sh
+```
+```bash
+# Single file
+uv run python dataset/03_batch_mouth_labeler.py \
+--src_file dataset/grid_audio_visual_speech_corpus/002_0001_front_000001.mpg \
+--output_dir dataset/output_grid_audio_visual_speech_corpus \
+--threshold_front 0.15 \
+--min_kpt_score 0.15
+
+# Process videos in a folder in bulk
+uv run python dataset/03_batch_mouth_labeler.py \
+--src_dir dataset/grid_audio_visual_speech_corpus \
+--output_dir dataset/output_grid_audio_visual_speech_corpus \
+--threshold_front 0.15 \
 --min_kpt_score 0.15
 ```
 
