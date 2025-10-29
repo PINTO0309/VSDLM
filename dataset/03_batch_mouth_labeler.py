@@ -536,7 +536,7 @@ def process_video(
         else:
             text = "unknown"
             color = (200, 200, 200)
-        draw_landmark(frame, landmarks, color=color, min_score=mouth_estimator.min_score)
+        draw_landmark(frame, landmarks, color=color, min_score=mouth_estimator.min_score, radius=2, thickness=1)
         draw_caption(frame, text, color=color)
         draw_bbox(frame, box, color=color)
         writer.write(frame)
