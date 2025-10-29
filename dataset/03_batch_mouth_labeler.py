@@ -132,13 +132,27 @@ class FanMouth:
         if face_box is None:
             return None, face_box, None
 
+        # Workaround for stabilizing landmark detection
+        # The headset covers most of the head, making head detection unstable.
+        frame_width = frame_bgr.shape[1]
+        frame_height = frame_bgr.shape[0]
+        w = min(max(face_box.x2 - face_box.x1, 0), frame_width)
+        h = min(max(face_box.y2 - face_box.y1, 0), frame_height)
+        long_side_size = max(w, h)
+        if w > 0 and w < long_side_size:
+            face_box.x1 = face_box.cx - (long_side_size // 2)
+            face_box.x2 = face_box.cx + (long_side_size // 2)
+        if h > 0 and h < long_side_size:
+            face_box.y1 = face_box.cy - (long_side_size // 2)
+            face_box.y2 = face_box.cy + (long_side_size // 2)
+
         landmarks = self._aligner(frame_bgr, [face_box])
         if landmarks.size == 0:
             return None, face_box, None
         mar_value = self._compute_mar(landmarks[0])
         return mar_value, face_box, (landmarks[0] if mar_value is not None else None)
 
-    def _select_face_box(self, boxes: List[Any]) -> Optional[Box]:
+    def _select_face_box(self, boxes: List[Box]) -> Optional[Box]:
         prioritized_classes = [self.HEAD_CLASS_ID, self.FACE_CLASS_ID]
         best_box = None
         for class_id in prioritized_classes:
