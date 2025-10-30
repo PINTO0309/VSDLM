@@ -91,6 +91,12 @@ def _parse_angle_list(value: str) -> List[float]:
     return ordered
 
 
+def _format_angle_tag(prefix: str, angle_deg: float) -> str:
+    value = int(round(angle_deg))
+    sign_char = "p" if value >= 0 else "m"
+    return f"{prefix}{sign_char}{abs(value):03d}"
+
+
 def _rotation_matrix(yaw_deg: float, pitch_deg: float) -> np.ndarray:
     yaw = np.deg2rad(yaw_deg)
     pitch = np.deg2rad(pitch_deg)
@@ -304,7 +310,7 @@ def save_rotated_face_images(
             x_start = (output_size - rw) // 2
             pad_image[y_start : y_start + rh, x_start : x_start + rw] = resized
 
-            suffix = f"pitch{int(round(pitch)):+03d}_yaw{int(round(yaw)):+03d}.png"
+            suffix = f"{_format_angle_tag('pitch', pitch)}_{_format_angle_tag('yaw', yaw)}.png"
             output_path = output_root / f"{base_name}_{suffix}"
             cv2.imwrite(str(output_path), pad_image)
             saved_paths.append(output_path)
