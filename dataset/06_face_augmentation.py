@@ -3,7 +3,7 @@ import contextlib
 import os
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 # Force MediaPipe's native logging to stay quiet before import
 os.environ["GLOG_minloglevel"] = "3"  # Only fatal
@@ -132,6 +132,12 @@ def _parse_angle_list(value: str) -> List[float]:
             seen.add(angle)
             ordered.append(angle)
     return ordered
+
+
+def _coerce_angle_values(value: Union[str, Iterable[float]]) -> List[float]:
+    if isinstance(value, str):
+        return _parse_angle_list(value)
+    return list(value)
 
 
 def _format_angle_tag(prefix: str, angle_deg: float) -> str:
@@ -297,8 +303,8 @@ def save_rotated_face_images(
     image_path: str,
     model_path: str,
     output_dir: str,
-    yaw_angles: Iterable[float],
-    pitch_angles: Iterable[float],
+    yaw_angles: Union[Iterable[float], str],
+    pitch_angles: Union[Iterable[float], str],
     crop_margin: int = 0,
     output_size: int = 128,
     pitch_desc: str = "pitch",
@@ -306,7 +312,23 @@ def save_rotated_face_images(
     pitch_position: Optional[int] = None,
     yaw_position: Optional[int] = None,
 ) -> List[Path]:
-    image, coords = detect_face_landmarks(image_path, model_path)
+    try:
+        pitch_values = _coerce_angle_values(pitch_angles)
+    except (ValueError, TypeError) as exc:
+        tqdm.write(f"Skipping {image_path}: invalid pitch angle specification ({exc})")
+        return []
+    try:
+        yaw_values = _coerce_angle_values(yaw_angles)
+    except (ValueError, TypeError) as exc:
+        tqdm.write(f"Skipping {image_path}: invalid yaw angle specification ({exc})")
+        return []
+    try:
+        image, coords = detect_face_landmarks(image_path, model_path)
+    except RuntimeError as exc:
+        if "No face landmarks detected" not in str(exc):
+            raise
+        tqdm.write(f"Skipping {image_path}: {exc}")
+        return []
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -314,9 +336,6 @@ def save_rotated_face_images(
     base_name = Path(image_path).stem
     max_width = 0
     max_height = 0
-
-    pitch_values = list(pitch_angles)
-    yaw_values = list(yaw_angles)
 
     pitch_kwargs = dict(
         desc=pitch_desc,
@@ -463,8 +482,8 @@ def main() -> None:
     normalized_argv = _normalize_range_arguments(sys.argv[1:])
     args = parser.parse_args(normalized_argv)
 
-    yaw_angles = _parse_angle_list(args.yaw_angles)
-    pitch_angles = _parse_angle_list(args.pitch_angles)
+    yaw_spec = args.yaw_angles
+    pitch_spec = args.pitch_angles
 
     if args.image_path:
         image_path = Path(args.image_path)
@@ -509,8 +528,8 @@ def main() -> None:
             str(image_path),
             args.model_path,
             str(target_output_dir),
-            yaw_angles,
-            pitch_angles,
+            yaw_spec,
+            pitch_spec,
             crop_margin=args.crop_margin,
             output_size=args.output_size,
             pitch_desc=f"pitch ",
