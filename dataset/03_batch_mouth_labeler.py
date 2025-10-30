@@ -3,6 +3,7 @@
 
 import argparse
 import re
+import sys
 from pathlib import Path
 from typing import List, Tuple, Optional, Iterable, Dict, Any
 
@@ -12,6 +13,11 @@ import cv2
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+
+# Ensure the repository root is on sys.path when running the script directly.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # === FAN (Face Alignment Network) ===
 from fan import fan_onnx
