@@ -165,7 +165,7 @@ uv run python 05_random_pick.py
 ```
 ```bash
 uv run python 06_face_augmentation.py \
---image test.png \
+--input_dir output_grid_audio_visual_speech_corpus_still_image_partial \
 --output_dir outputs_face_aug
 ```
 ```bash
