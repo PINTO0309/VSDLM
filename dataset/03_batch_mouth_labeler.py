@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+import re
 from pathlib import Path
 from typing import List, Tuple, Optional, Iterable, Dict, Any
 
@@ -376,6 +377,61 @@ def save_face_crops(
         saved += 1
     return saved
 
+def write_still_summary(
+    df: pd.DataFrame,
+    still_dir: Optional[Path],
+    base_name: str,
+) -> Optional[Path]:
+    """
+    Append per-frame MAR/label information to a group summary CSV located one level above the still directory.
+    """
+    if still_dir is None or df.empty:
+        return None
+
+    group_key = re.sub(r"_(\d{6})$", "", base_name)
+    summary_dir = still_dir.parent
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = summary_dir / f"{group_key}.csv"
+
+    parts = group_key.split("_")
+    dataset_id = parts[0] if len(parts) > 0 else ""
+    talker_id = parts[1] if len(parts) > 1 else ""
+    orientation = parts[2] if len(parts) > 2 else ""
+    suffix_match = re.search(r"_(\d{6})$", base_name)
+    sequence_id = suffix_match.group(1) if suffix_match else ""
+
+    rel_prefix = still_dir.name
+    summary_df = pd.DataFrame(
+        {
+            "dataset_id": dataset_id,
+            "talker_id": talker_id,
+            "orientation": orientation,
+            "sequence_id": sequence_id,
+            "video_name": base_name,
+            "still_image": [
+                str(Path(rel_prefix) / f"{base_name}_{int(idx):06d}.png")
+                for idx in df["frame_index"]
+            ],
+            "MAR": df["MAR"],
+            "class_id": df["mouth_label"],
+        }
+    )
+    columns = [
+        "dataset_id",
+        "talker_id",
+        "orientation",
+        "sequence_id",
+        "video_name",
+        "still_image",
+        "MAR",
+        "class_id",
+    ]
+    summary_df = summary_df.reindex(columns=columns)
+    mode = "a" if summary_path.exists() else "w"
+    header = not summary_path.exists()
+    summary_df.to_csv(summary_path, mode=mode, header=header, index=False)
+    return summary_path
+
 def render_talker_summary(
     talker_key: str,
     counts: Dict[str, int],
@@ -587,9 +643,8 @@ def process_video(
         mar, face_box, landmarks = mouth_estimator.mar(frame)
         frames_bgr.append(frame)
         frame_face_bboxes.append(face_box)
-        if not still_only:
-            frame_mars.append(mar)
-            frame_landmarks.append(landmarks)
+        frame_mars.append(mar)
+        frame_landmarks.append(landmarks)
 
         idx += 1
         if total > 0 and idx % 200 == 0:
@@ -597,25 +652,14 @@ def process_video(
 
     cap.release()
 
-    saved_crops = 0
     if still_dir is not None:
-        saved_crops = save_face_crops(
+        save_face_crops(
             frames_bgr,
             frame_face_bboxes,
             still_dir,
             base_name,
             still_crop_size,
         )
-
-    if still_only:
-        total_frames = len(frames_bgr)
-        counts = {
-            "unknown": 0,
-            "closed": 0,
-            "open": 0,
-            "total_frames": total_frames,
-        }
-        return None, None, counts
 
     fourcc = pick_codec_for_mp4()
     # Smooth MAR series
@@ -645,6 +689,17 @@ def process_video(
     suffix = f"_c_{closed_count:06d}_o_{open_count:06d}_unk_{unknown_count:06d}"
     csv_path = output_dir / f"{base_name}{suffix}.csv"
     out_video_path = output_dir / f"{base_name}_output{suffix}.mp4"
+
+    counts = {
+        "unknown": unknown_count,
+        "closed": closed_count,
+        "open": open_count,
+        "total_frames": len(labels),
+    }
+
+    if still_only:
+        summary_path = write_still_summary(df, still_dir, base_name)
+        return None, None, counts
 
     # VideoWriter (initialized with filename containing counts)
     writer = cv2.VideoWriter(str(out_video_path), fourcc, out_fps, (out_w, out_h))
@@ -681,12 +736,6 @@ def process_video(
         writer.write(annotated)
 
     writer.release()
-    counts = {
-        "unknown": unknown_count,
-        "closed": closed_count,
-        "open": open_count,
-        "total_frames": len(labels),
-    }
     return csv_path, out_video_path, counts
 
 def main():
