@@ -161,8 +161,9 @@ uv run python dataset/03_batch_mouth_labeler.py \
 
 ```bash
 cd dataset
+
 uv run python 05_face_augmentation.py \
---image test.png \
+--input_dir output_grid_audio_visual_speech_corpus_still_image \
 --output_dir outputs_face_aug
 ```
 
