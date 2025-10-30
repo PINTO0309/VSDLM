@@ -181,6 +181,7 @@ uv run python 06_demo_deimv2_onnx_wholebody34_with_edges.py \
 -dnm \
 -drc 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 20 21 22 23 24 25 26 27 28 29 30 31 32 33 \
 --crop_size 48 \
+--crop_disable_padding \
 --crop_margin_top 2 \
 --crop_margin_bottom 6 \
 --crop_margin_left 2 \

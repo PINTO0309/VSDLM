@@ -11,6 +11,10 @@ import math
 import time
 from pprint import pprint
 import numpy as np
+import json
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass
@@ -77,6 +81,83 @@ class Color(Enum):
 
     def __call__(self, s):
         return str(self) + str(s) + str(Color.RESET)
+
+
+class ResizeStatsCollector:
+    def __init__(self, histogram_name: str = "mouth_crop_size_hist.png", stats_name: str = "mouth_crop_size_stats.json") -> None:
+        self.heights: List[int] = []
+        self.widths: List[int] = []
+        self.histogram_name = histogram_name
+        self.stats_name = stats_name
+
+    def add(self, height: int, width: int) -> None:
+        if height is None or width is None:
+            return
+        self.heights.append(int(height))
+        self.widths.append(int(width))
+
+    def has_data(self) -> bool:
+        return bool(self.heights) and bool(self.widths)
+
+    def summarize(self) -> Dict[str, Dict[str, float]]:
+        arr_h = np.array(self.heights, dtype=np.float32)
+        arr_w = np.array(self.widths, dtype=np.float32)
+        return {
+            "height": {
+                "mean": float(arr_h.mean()),
+                "median": float(np.median(arr_h)),
+                "min": float(arr_h.min()),
+                "max": float(arr_h.max()),
+            },
+            "width": {
+                "mean": float(arr_w.mean()),
+                "median": float(np.median(arr_w)),
+                "min": float(arr_w.min()),
+                "max": float(arr_w.max()),
+            },
+            "count": len(self.heights),
+        }
+
+    def finalize(self, output_dir: Path) -> None:
+        if not self.has_data():
+            print(Color.YELLOW("[Resize Stats] No resized crops were collected."))
+            return
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        stats = self.summarize()
+        height_stats = stats["height"]
+        width_stats = stats["width"]
+        print(
+            Color.CYAN(
+                f"[Resize Stats] count={stats['count']} | height mean={height_stats['mean']:.2f}px median={height_stats['median']:.2f}px | "
+                f"width mean={width_stats['mean']:.2f}px median={width_stats['median']:.2f}px"
+            )
+        )
+
+        stats_path = output_dir / self.stats_name
+        with open(stats_path, "w", encoding="utf-8") as fp:
+            json.dump(stats, fp, indent=2)
+        print(Color.GREEN(f"[Resize Stats] Saved summary to {stats_path}"))
+
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+        axes[0].hist(self.heights, bins=min(20, max(5, len(set(self.heights)))), color="#1f77b4", edgecolor="black")
+        axes[0].set_title("Height distribution")
+        axes[0].set_xlabel("Pixels")
+        axes[0].set_ylabel("Frequency")
+
+        axes[1].hist(self.widths, bins=min(20, max(5, len(set(self.widths)))), color="#ff7f0e", edgecolor="black")
+        axes[1].set_title("Width distribution")
+        axes[1].set_xlabel("Pixels")
+        axes[1].set_ylabel("Frequency")
+
+        fig.suptitle("Mouth crop size distribution")
+        fig.tight_layout()
+        hist_path = output_dir / self.histogram_name
+        fig.savefig(hist_path, dpi=200)
+        plt.close(fig)
+        print(Color.GREEN(f"[Resize Stats] Histogram saved to {hist_path}"))
 
 @dataclass(frozen=False)
 class Box():
@@ -209,9 +290,14 @@ class SimpleSortTracker:
         if not boxes:
             return
 
-def resize_with_padding(image: np.ndarray, target_size: int) -> np.ndarray:
+def resize_with_padding(
+    image: np.ndarray,
+    target_size: int,
+    apply_padding: bool = True,
+    stats_collector: Optional[ResizeStatsCollector] = None,
+) -> np.ndarray:
     """
-    Resize an image while keeping aspect ratio and pad the remaining area with mid-gray.
+    Resize an image while preserving aspect ratio. Optionally pad with mid-gray.
     """
     if target_size <= 0:
         raise ValueError("target_size must be positive.")
@@ -228,10 +314,18 @@ def resize_with_padding(image: np.ndarray, target_size: int) -> np.ndarray:
     if resized.ndim == 2:
         resized = cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
 
+    if not apply_padding:
+        output = resized
+        if stats_collector is not None:
+            stats_collector.add(output.shape[0], output.shape[1])
+        return output
+
     canvas = np.full((target_size, target_size, 3), 127, dtype=resized.dtype)
     y_offset = (target_size - new_height) // 2
     x_offset = (target_size - new_width) // 2
     canvas[y_offset : y_offset + new_height, x_offset : x_offset + new_width] = resized
+    if stats_collector is not None:
+        stats_collector.add(canvas.shape[0], canvas.shape[1])
     return canvas
 
 def crop_box_with_margin(
@@ -1224,7 +1318,7 @@ def main():
         '--crop_size',
         type=int,
         default=32,
-        help='Output crop size for classid=19 mouth regions. Resized with aspect ratio preserved and gray padding.',
+        help='Target size for classid=19 mouth regions (aspect ratio preserved).',
     )
     parser.add_argument(
         '--crop_margin_top',
@@ -1249,6 +1343,11 @@ def main():
         type=int,
         default=2,
         help='Right pixel margin when cropping classid=19 mouth regions.',
+    )
+    parser.add_argument(
+        '--crop_disable_padding',
+        action='store_true',
+        help='Resize cropped mouth regions without gray padding.',
     )
     args = parser.parse_args()
 
@@ -1302,6 +1401,7 @@ def main():
     crop_margin_right: int = args.crop_margin_right
     if any(m < 0 for m in (crop_margin_top, crop_margin_bottom, crop_margin_left, crop_margin_right)):
         parser.error("All crop margins must be non-negative integers.")
+    crop_disable_padding: bool = args.crop_disable_padding
     providers: List[Tuple[str, Dict] | str] = None
 
     if execution_provider == 'cpu':
@@ -1399,6 +1499,7 @@ def main():
     mouth_margin_left = crop_margin_left
     mouth_margin_right = crop_margin_right
     output_root_path = Path("output")
+    resize_stats = ResizeStatsCollector()
     while True:
         image: np.ndarray = None
         if file_paths is not None:
@@ -1479,7 +1580,7 @@ def main():
                     mouth_margin_right,
                 )
                 if crop_image is not None:
-                    prepared_crop = resize_with_padding(crop_image, crop_size)
+                    prepared_crop = resize_with_padding(crop_image, crop_size, apply_padding=not crop_disable_padding, stats_collector=resize_stats)
                     crop_filename = target_crop_dir / f"{base_identifier}_mouth.png"
                     cv2.imwrite(str(crop_filename), prepared_crop)
 
@@ -1903,6 +2004,8 @@ def main():
                 enable_trackid_overlay = False
         elif key == ord('m'): # 109, M, Head distance measurement mode switch
             enable_head_distance_measurement = not enable_head_distance_measurement
+
+    resize_stats.finalize(output_root_path)
 
     if video_writer is not None:
         video_writer.release()
