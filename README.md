@@ -84,7 +84,8 @@ uv run python -m vsdlm exportonnx \
    https://doi.org/10.1121/1.5042758
    ```
 
-### Supporting scripts
+### Dataset Preparation
+#### Lombard GRID (Audio-Visual Lombard Speech Corpus)
 
 ```bash
 ./dataset/01_rename_lombardgrid.sh
@@ -131,6 +132,8 @@ uv run python dataset/03_batch_mouth_labeler.py \
    - Mouth closed | ############                             |  30.3% (200749)
    - Mouth open   | ###########################              |  68.7% (455480)
 ```
+
+#### GRID Audio-Visual Speech Corpus
 
 ```bash
 ./dataset/02_rename_grid_audio_visual.sh
