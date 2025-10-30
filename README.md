@@ -1,29 +1,90 @@
 # VSDLM
-Visual only speech detection by lip movement.
+Visual-only speech detection driven by lip movements.
 
-- Datasets
+## Training Pipeline
 
-  1. GRID Audio-Visual Speech Corpus
-    Contents: 34 speakers x 1000 sentences each (frontal video + audio). Speech sections are clearly separated by sentence.
-    Usage: Assuming there is a mouth ROI, it is easy to binarize by creating sentence clips = "speaking" and silent sections or shuffling to create "not speaking".
-    License: CC BY 4.0 (commercial use permitted with attribution). Please indicate the source on the distribution page.
-    https://zenodo.org/records/3625687
-      ```bibtex
-      Cooke, M., Barker, J., Cunningham, S., & Shao, X. (2006).
-      The Grid Audio-Visual Speech Corpus (1.0) [Data set].
-      Zenodo. https://doi.org/10.5281/zenodo.3625687
-      ```
-  2. Lombard GRID（Audio-Visual Lombard Speech Corpus）
-    Contents: 54 speakers x 100 sentences each (50 each for "normal" and "Lombard"). Two perspectives: frontal and side.
-    Uses: All clips are speech, so Positives (speaking) can be easily created. Negatives are created by mixing pauses and other data. Speech in noisy environments (Lombard speech) has large mouth movements, making it effective for robust mouth movement detection.
-    License: CC BY 4.0 (specified on the official page).
-    https://spandh.dcs.shef.ac.uk/avlombard
-      ```bibtex
-      Najwa Alghamdi, Steve Maddock, Ricard Marxer, Jon Barker and Guy J. Brown,
-      A corpus of audio-visual Lombard speech with frontal and profile views,
-      The Journal of the Acoustical Society of America 143, EL523 (2018);
-      https://doi.org/10.1121/1.5042758
-      ```
+- Use the images located under `dataset/output/002_xxxx_front_yyyyyy` together with their annotations in `dataset/output/002_xxxx_front.csv`.
+- Only samples with `class_id` equal to 1 (closed) or 2 (open) are used. Label 0 (unknown) is dropped, and the remaining labels are remapped to 0 (closed) and 1 (open).
+- Every augmented image that originates from the same `still_image` stays in the same split to prevent leakage.
+- The training loop relies on `BCEWithLogitsLoss`, `pos_weight`, and a `WeightedRandomSampler` to stabilise optimisation under class imbalance; inference produces sigmoid probabilities.
+- Training history, validation metrics, optional test predictions, checkpoints, configuration JSON, and ONNX exports are produced automatically.
+- Per-epoch checkpoints named like `vsdlm_epoch_0001.pt` are retained (latest 10), as well as the best checkpoints named `vsdlm_best_epoch0004_acc0.9321.pt` (also latest 10).
+- The model is a lightweight depthwise-separable CNN whose width/depth can be tuned via `--base_channels` and `--num_blocks`.
+- Mixed precision can be enabled with `--use_amp` when CUDA is available.
+- Resume training with `--resume path/to/vsdlm_epoch_XXXX.pt`; all optimiser/scheduler/AMP states and history are restored.
+- Loss/accuracy/F1 metrics are logged to TensorBoard under `output_dir`, and `tqdm` progress bars expose per-epoch progress for train/val/test loops.
+
+### 1. Training
+
+```bash
+uv run python -m vsdlm train \
+--data_root dataset/output \
+--output_dir runs/vsdlm \
+--epochs 30 \
+--batch_size 64 \
+--train_ratio 0.8 \
+--val_ratio 0.2 \
+--image_size 48 \
+--base_channels 32 \
+--num_blocks 4 \
+--seed 42 \
+--device auto \
+--use_amp
+```
+
+- Outputs include the latest 10 `vsdlm_epoch_*.pt`, the latest 10 `vsdlm_best_epochXXXX_accYYYY.pt`, `history.json`, `summary.json`, optional `test_predictions.csv`, and `train.log`.
+- Add `--resume <checkpoint>` to continue from an earlier epoch. Remember that `--epochs` indicates the desired total epoch count (e.g. resuming `--epochs 40` after training to epoch 30 will run 10 additional epochs).
+- Launch TensorBoard with:
+  ```bash
+  tensorboard --logdir runs/vsdlm
+  ```
+
+### 2. Inference
+
+```bash
+uv run python -m vsdlm predict \
+--checkpoint runs/vsdlm/vsdlm_best_epoch0004_acc0.9321.pt \
+--inputs dataset/output/002_0005_front_028001 \
+--output runs/vsdlm/predictions.csv
+```
+
+- `--inputs` accepts files and/or directories (recursively scanned).
+- The resulting CSV contains raw logits and sigmoid probabilities (`prob_open`).
+
+### 3. ONNX Export
+
+```bash
+uv run python -m vsdlm exportonnx \
+--checkpoint runs/vsdlm/vsdlm_best_epoch0004_acc0.9321.pt \
+--output runs/vsdlm/vsdlm.onnx \
+--opset 17
+```
+
+- The saved graph exposes `images` as input and `prob_open` as output (batch dimension is dynamic); probabilities can be consumed directly.
+- After exporting, the tool runs `onnxsim` for simplification and rewrites any remaining BatchNormalization nodes into affine `Mul`/`Add` primitives. If simplification fails, a warning is emitted and the unsimplified model is preserved.
+
+## Datasets
+
+1. **GRID Audio-Visual Speech Corpus**
+   34 speakers × 1000 sentences (frontal video + audio). Speech segments are cleanly separated. Creative exploitation: treat sentences as “speaking” and silence/random segments as “non-speaking”. License: CC BY 4.0.
+   https://zenodo.org/records/3625687
+   ```bibtex
+   Cooke, M., Barker, J., Cunningham, S., & Shao, X. (2006).
+   The Grid Audio-Visual Speech Corpus (1.0) [Data set].
+   Zenodo. https://doi.org/10.5281/zenodo.3625687
+   ```
+
+2. **Lombard GRID (Audio-Visual Lombard Speech Corpus)**
+   54 speakers × 100 sentences (half “normal”, half “Lombard”), captured from frontal and profile views. All clips contain speech; create negatives by mixing pauses or other data. Lombard speech features exaggerated mouth motion, improving robustness. License: CC BY 4.0.
+   https://spandh.dcs.shef.ac.uk/avlombard
+   ```bibtex
+   Najwa Alghamdi, Steve Maddock, Ricard Marxer, Jon Barker and Guy J. Brown,
+   A corpus of audio-visual Lombard speech with frontal and profile views,
+   The Journal of the Acoustical Society of America 143, EL523 (2018);
+   https://doi.org/10.1121/1.5042758
+   ```
+
+### Supporting scripts
 
 ```bash
 ./dataset/01_rename_lombardgrid.sh
@@ -37,7 +98,7 @@ uv run python dataset/03_batch_mouth_labeler.py \
 --threshold_side 0.55 \
 --min_kpt_score 0.15
 
-# Process videos in a folder in bulk
+# Batch processing
 uv run python dataset/03_batch_mouth_labeler.py \
 --src_dir dataset/lombardgrid \
 --output_dir dataset/output_lombardgrid \
@@ -82,14 +143,14 @@ uv run python dataset/03_batch_mouth_labeler.py \
 --threshold_front 0.15 \
 --min_kpt_score 0.15
 
-# Process videos in a folder in bulk
+# Batch processing
 uv run python dataset/03_batch_mouth_labeler.py \
 --src_dir dataset/grid_audio_visual_speech_corpus \
 --output_dir dataset/output_grid_audio_visual_speech_corpus \
 --threshold_front 0.15 \
 --min_kpt_score 0.15
 
-# Still only mode and Process videos in a folder in bulk
+# Still-only mode
 uv run python dataset/03_batch_mouth_labeler.py \
 --src_dir dataset/grid_audio_visual_speech_corpus \
 --output_dir dataset/output_grid_audio_visual_speech_corpus \
@@ -104,6 +165,7 @@ uv run python 05_face_augmentation.py \
 --image test.png \
 --output_dir outputs_face_aug
 ```
+
 ```bash
 uv run python 06_demo_deimv2_onnx_wholebody34_with_edges.py \
 -i outputs_face_aug/ \
@@ -127,8 +189,7 @@ uv run python 06_demo_deimv2_onnx_wholebody34_with_edges.py \
 
 ## Acknowledgements
 
-1. https://github.com/hhj1897/face_alignment MIT license
-2. https://github.com/hhj1897/face_detection MIT license
-3. https://github.com/PINTO0309/Face_Mask_Augmentation MIT license
-4. https://github.com/PINTO0309/PINTO_model_zoo/tree/main/472_DEIMv2-Wholebody34 Apache2.0
-
+1. https://github.com/hhj1897/face_alignment — MIT License
+2. https://github.com/hhj1897/face_detection — MIT License
+3. https://github.com/PINTO0309/Face_Mask_Augmentation — MIT License
+4. https://github.com/PINTO0309/PINTO_model_zoo/tree/main/472_DEIMv2-Wholebody34 — Apache 2.0

@@ -4,6 +4,7 @@ GRID_Audio-Visual_Speech_Corpus*/
 grid_audio_visual_speech_corpus*/
 output*/
 test*/
+runs/
 *.pth
 *.onnx
 *.tar.gz

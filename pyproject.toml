@@ -13,6 +13,11 @@ dependencies = [
     "opencv-python==4.11.0.86",
     "pandas==2.3.3",
     "tqdm==4.67.1",
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+    "tensorboard==2.17.1",
+    "onnxsim==0.4.30",
+    "sit4onnx==1.0.10",
 ]
 [tool.uv]
 override-dependencies = [
