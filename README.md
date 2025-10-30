@@ -192,9 +192,9 @@ uv run python 07_demo_deimv2_onnx_wholebody34_with_edges.py \
 
 ## Acknowledgements
 
-1. https://zenodo.org/records/3625687
-2. https://spandh.dcs.shef.ac.uk/avlombard
-3. https://github.com/hhj1897/face_alignment — MIT License
-4. https://github.com/hhj1897/face_detection — MIT License
-5. https://github.com/PINTO0309/Face_Mask_Augmentation — MIT License
-6. https://github.com/PINTO0309/PINTO_model_zoo/tree/main/472_DEIMv2-Wholebody34 — Apache 2.0
+1. https://zenodo.org/records/3625687 - CC BY 4.0 License
+2. https://spandh.dcs.shef.ac.uk/avlombard - CC BY 4.0 License
+3. https://github.com/hhj1897/face_alignment - MIT License
+4. https://github.com/hhj1897/face_detection - MIT License
+5. https://github.com/PINTO0309/Face_Mask_Augmentation - MIT License
+6. https://github.com/PINTO0309/PINTO_model_zoo/tree/main/472_DEIMv2-Wholebody34 - Apache 2.0
