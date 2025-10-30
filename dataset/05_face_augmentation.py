@@ -1,12 +1,54 @@
 import argparse
+import contextlib
+import os
 import sys
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
+
+# Force MediaPipe's native logging to stay quiet before import
+os.environ["GLOG_minloglevel"] = "3"  # Only fatal
+os.environ["GLOG_stderrthreshold"] = "3"
+os.environ["ABSL_LOGLEVEL"] = "3"
+os.environ["ABSL_LOGGING_STDERR_THRESHOLD"] = "3"
+os.environ.setdefault("GLOG_logtostderr", "1")
+os.environ.setdefault("MEDIAPIPE_CPP_MIN_LOG_LEVEL", "3")
 
 import cv2
 import mediapipe as mp
 import numpy as np
 from tqdm import tqdm
+
+try:
+    from absl import logging as absl_logging
+
+    absl_logging.set_stderrthreshold(absl_logging.FATAL)
+    absl_logging.set_verbosity(absl_logging.FATAL)
+except ModuleNotFoundError:
+    pass
+
+
+@contextlib.contextmanager
+def _suppress_console_output():
+    """Temporarily silence stdout/stderr at the file-descriptor level."""
+
+    with open(os.devnull, "w") as devnull:
+        old_stdout_fd = os.dup(1)
+        old_stderr_fd = os.dup(2)
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        try:
+            os.dup2(devnull.fileno(), 1)
+            os.dup2(devnull.fileno(), 2)
+            sys.stdout = devnull
+            sys.stderr = devnull
+            yield
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+            os.dup2(old_stdout_fd, 1)
+            os.dup2(old_stderr_fd, 2)
+            os.close(old_stdout_fd)
+            os.close(old_stderr_fd)
 
 
 def detect_face_landmarks(image_path: str, model_path: str = "face_landmarker.task"):
@@ -30,8 +72,9 @@ def detect_face_landmarks(image_path: str, model_path: str = "face_landmarker.ta
         output_face_blendshapes=True,
         output_facial_transformation_matrixes=True,
     )
-    with FaceLandmarker.create_from_options(options) as landmarker:
-        result = landmarker.detect(mp_image)
+    with _suppress_console_output():
+        with FaceLandmarker.create_from_options(options) as landmarker:
+            result = landmarker.detect(mp_image)
 
     if not result.face_landmarks:
         raise RuntimeError("No face landmarks detected")
@@ -258,6 +301,10 @@ def save_rotated_face_images(
     pitch_angles: Iterable[float],
     crop_margin: int = 0,
     output_size: int = 128,
+    pitch_desc: str = "pitch",
+    yaw_desc: str = "yaw",
+    pitch_position: Optional[int] = None,
+    yaw_position: Optional[int] = None,
 ) -> List[Path]:
     image, coords = detect_face_landmarks(image_path, model_path)
     output_root = Path(output_dir)
@@ -268,10 +315,34 @@ def save_rotated_face_images(
     max_width = 0
     max_height = 0
 
-    pitch_iter = tqdm(list(pitch_angles), desc="pitch", leave=True, dynamic_ncols=True)
+    pitch_values = list(pitch_angles)
+    yaw_values = list(yaw_angles)
+
+    pitch_kwargs = dict(
+        desc=pitch_desc,
+        leave=pitch_position is None,
+        dynamic_ncols=True,
+    )
+    if pitch_position is not None:
+        pitch_kwargs["position"] = pitch_position
+
+    yaw_leave_default = yaw_position is None
+
+    pitch_iter = tqdm(pitch_values, **pitch_kwargs)
     for pitch in pitch_iter:
-        yaw_iter = tqdm(list(yaw_angles), desc="  yaw", leave=False, dynamic_ncols=True)
+        pitch_iter.set_postfix_str(f"{pitch:+g}")
+
+        yaw_kwargs = dict(
+            desc=yaw_desc,
+            leave=yaw_leave_default,
+            dynamic_ncols=True,
+        )
+        if yaw_position is not None:
+            yaw_kwargs["position"] = yaw_position
+
+        yaw_iter = tqdm(yaw_values, **yaw_kwargs)
         for yaw in yaw_iter:
+            yaw_iter.set_postfix_str(f"{yaw:+g}")
             rotated, mask = rotate_face_image(image, coords, yaw, pitch)
 
             ys, xs = np.where(mask > 0)
@@ -315,8 +386,10 @@ def save_rotated_face_images(
             cv2.imwrite(str(output_path), pad_image)
             saved_paths.append(output_path)
 
-    print(f"max cropped width: {max_width}px")
-    print(f"max cropped height: {max_height}px")
+        yaw_iter.close()
+
+    pitch_iter.close()
+
     return saved_paths
 
 
@@ -394,7 +467,10 @@ def main() -> None:
     pitch_angles = _parse_angle_list(args.pitch_angles)
 
     if args.image_path:
-        image_paths = [Path(args.image_path)]
+        image_path = Path(args.image_path)
+        if not image_path.is_file():
+            raise FileNotFoundError(f"Input image does not exist: {image_path}")
+        image_entries = [(image_path, Path())]
     else:
         input_dir = Path(args.input_dir)
         if not input_dir.is_dir():
@@ -408,33 +484,47 @@ def main() -> None:
             ".tiff",
             ".webp",
         }
-        image_paths = sorted(
-            [
-                path
-                for path in input_dir.iterdir()
-                if path.is_file() and path.suffix.lower() in allowed_suffixes
-            ]
-        )
-        if not image_paths:
+        image_entries = []
+        for path in input_dir.rglob("*"):
+            if path.is_file() and path.suffix.lower() in allowed_suffixes:
+                relative_dir = path.parent.relative_to(input_dir)
+                image_entries.append((path, relative_dir))
+        image_entries.sort(key=lambda item: item[0].relative_to(input_dir).as_posix())
+        if not image_entries:
             raise FileNotFoundError(
                 f"No supported image files found in directory: {input_dir}"
             )
 
     total_outputs = 0
-    for image_path in image_paths:
-        print(f"Processing image: {image_path}")
+    image_iter = tqdm(
+        image_entries,
+        desc="images",
+        unit="image",
+        dynamic_ncols=True,
+    )
+    for image_path, relative_dir in image_iter:
+        image_iter.set_postfix_str(image_path.name)
+        target_output_dir = Path(args.output_dir) / relative_dir
         saved_paths = save_rotated_face_images(
             str(image_path),
             args.model_path,
-            args.output_dir,
+            str(target_output_dir),
             yaw_angles,
             pitch_angles,
             crop_margin=args.crop_margin,
             output_size=args.output_size,
+            pitch_desc=f"pitch ",
+            yaw_desc="yaw   ",
+            pitch_position=1,
+            yaw_position=2,
         )
         total_outputs += len(saved_paths)
 
-    print(f"Processed {len(image_paths)} image(s). Generated {total_outputs} file(s).")
+    image_iter.close()
+
+    print(
+        f"Processed {len(image_entries)} image(s). Generated {total_outputs} file(s)."
+    )
 
 
 if __name__ == "__main__":
