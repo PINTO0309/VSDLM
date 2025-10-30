@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--per-talker",
         type=int,
-        default=20,
+        default=10,
         help="Number of folders to copy per talker.",
     )
     parser.add_argument(
