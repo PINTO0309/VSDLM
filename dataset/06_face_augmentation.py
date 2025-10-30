@@ -315,7 +315,7 @@ def save_rotated_face_images(
 
 
 def _normalize_range_arguments(argv: Sequence[str]) -> List[str]:
-    option_keys = {"--yaw", "--pitch"}
+    option_keys = {"--yaw_angles", "--pitch_angles"}
     normalized: List[str] = []
     skip = False
     for idx, token in enumerate(argv):
@@ -339,35 +339,43 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Rotate full-face region based on MediaPipe Face Landmarks."
     )
-    parser.add_argument("--image", required=True, help="Path to the input image file")
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument(
+        "--image_path",
+        help="Path to a single input image file",
+    )
+    source_group.add_argument(
+        "--input_dir",
+        help="Path to a directory containing input images",
+    )
     parser.add_argument(
-        "--model",
+        "--model_path",
         default="face_landmarker.task",
         help="Path to the MediaPipe face landmarker task file",
     )
     parser.add_argument(
-        "--output-dir",
+        "--output_dir",
         default="outputs_face_pose",
         help="Output directory",
     )
     parser.add_argument(
-        "--yaw",
+        "--yaw_angles",
         default="-25:25:5",
         help="Yaw angles (degrees). Comma separated or start:end[:step] (e.g. -25:25:5)",
     )
     parser.add_argument(
-        "--pitch",
+        "--pitch_angles",
         default="-30:30:5",
         help="Pitch angles (degrees). Comma separated or start:end[:step] (e.g. -20:20:5)",
     )
     parser.add_argument(
-        "--crop-margin",
+        "--crop_margin",
         type=int,
         default=0,
         help="Extra padding added to the crop bounds (pixels)",
     )
     parser.add_argument(
-        "--output-size",
+        "--output_size",
         type=int,
         default=128,
         help="Output image side length (pixels)",
@@ -376,17 +384,51 @@ def main() -> None:
     normalized_argv = _normalize_range_arguments(sys.argv[1:])
     args = parser.parse_args(normalized_argv)
 
-    yaw_angles = _parse_angle_list(args.yaw)
-    pitch_angles = _parse_angle_list(args.pitch)
-    saved_paths = save_rotated_face_images(
-        args.image,
-        args.model,
-        args.output_dir,
-        yaw_angles,
-        pitch_angles,
-        crop_margin=args.crop_margin,
-        output_size=args.output_size,
-    )
+    yaw_angles = _parse_angle_list(args.yaw_angles)
+    pitch_angles = _parse_angle_list(args.pitch_angles)
+
+    if args.image_path:
+        image_paths = [Path(args.image_path)]
+    else:
+        input_dir = Path(args.input_dir)
+        if not input_dir.is_dir():
+            raise NotADirectoryError(f"Input directory does not exist: {input_dir}")
+        allowed_suffixes = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".bmp",
+            ".tif",
+            ".tiff",
+            ".webp",
+        }
+        image_paths = sorted(
+            [
+                path
+                for path in input_dir.iterdir()
+                if path.is_file() and path.suffix.lower() in allowed_suffixes
+            ]
+        )
+        if not image_paths:
+            raise FileNotFoundError(
+                f"No supported image files found in directory: {input_dir}"
+            )
+
+    total_outputs = 0
+    for image_path in image_paths:
+        print(f"Processing image: {image_path}")
+        saved_paths = save_rotated_face_images(
+            str(image_path),
+            args.model_path,
+            args.output_dir,
+            yaw_angles,
+            pitch_angles,
+            crop_margin=args.crop_margin,
+            output_size=args.output_size,
+        )
+        total_outputs += len(saved_paths)
+
+    print(f"Processed {len(image_paths)} image(s). Generated {total_outputs} file(s).")
 
 
 if __name__ == "__main__":
