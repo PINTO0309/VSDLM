@@ -161,13 +161,15 @@ uv run python dataset/03_batch_mouth_labeler.py \
 
 ```bash
 cd dataset
-uv run python 05_face_augmentation.py \
+uv run python 05_random_pick.py
+```
+```bash
+uv run python 06_face_augmentation.py \
 --image test.png \
 --output_dir outputs_face_aug
 ```
-
 ```bash
-uv run python 06_demo_deimv2_onnx_wholebody34_with_edges.py \
+uv run python 07_demo_deimv2_onnx_wholebody34_with_edges.py \
 -i outputs_face_aug/ \
 -m deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx \
 -ep tensorrt \
