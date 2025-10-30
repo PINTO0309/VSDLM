@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
 
-SPLIT_COUNT = 10
+SPLIT_COUNT = 5
 
 
 def parse_args() -> argparse.Namespace:
@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Randomly copy a fixed number of folders per talker from the "
             "'output_grid_audio_visual_speech_corpus_still_image' dataset into "
-            "ten equally sized splits under "
+            "ten splits (balanced as evenly as possible) under "
             "'output_grid_audio_visual_speech_corpus_still_image_partial'."
         )
     )
@@ -120,17 +120,20 @@ def copy_folders(
             ordered_entries.append((talker, folder))
 
     total = len(ordered_entries)
-    if total and total % len(dest_dirs) != 0:
-        raise RuntimeError(
-            f"Total selected folders ({total}) cannot be evenly split into {len(dest_dirs)} destinations."
-        )
+    if total == 0 or not dest_dirs:
+        for dest_dir in dest_dirs:
+            print(f"{dest_dir}: total 0 folders")
+        return 0
 
     talker_counts: Dict[str, int] = {}
     dest_counts: Dict[Path, int] = {dest: 0 for dest in dest_dirs}
+    dest_order = list(dest_dirs)
+    dest_base = total // len(dest_order)
+    dest_remainder = total % len(dest_order)
 
     for idx, (talker, folder) in enumerate(ordered_entries):
         talker_counts[talker] = talker_counts.get(talker, 0) + 1
-        dest_dir = dest_dirs[idx % len(dest_dirs)]
+        dest_dir = dest_order[idx % len(dest_order)]
         dest_path = dest_dir / folder.name
         if dest_path.exists():
             shutil.rmtree(dest_path)
@@ -139,8 +142,18 @@ def copy_folders(
 
     for talker in sorted(talker_counts):
         print(f"{talker}: copied {talker_counts[talker]} folders")
-    for dest_dir in dest_dirs:
-        print(f"{dest_dir}: total {dest_counts[dest_dir]} folders")
+    for pos, dest_dir in enumerate(dest_order):
+        quota = dest_base + (1 if pos < dest_remainder else 0)
+        actual = dest_counts[dest_dir]
+        print(f"{dest_dir}: total {actual} folders (target {quota})")
+
+    if dest_counts:
+        min_count = min(dest_counts.values())
+        max_count = max(dest_counts.values())
+        if max_count - min_count > 1:
+            print(
+                "Warning: distribution difference exceeds 1 folder between splits."
+            )
 
     return total
 
@@ -157,11 +170,6 @@ def main() -> None:
 
     selections = select_folders_per_talker(grouped, args.per_talker, rng)
     dest_dirs = destinations_from_base(args.dst)
-    total_expected = sum(len(paths) for paths in selections.values())
-    if total_expected and total_expected % len(dest_dirs) != 0:
-        raise RuntimeError(
-            f"Selected {total_expected} folders; adjust --per-talker so it is divisible by {len(dest_dirs)}."
-        )
     prepare_destinations(dest_dirs, args.clear_dst)
     total_copied = copy_folders(selections, dest_dirs)
 
