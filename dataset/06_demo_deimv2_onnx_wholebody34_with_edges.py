@@ -209,6 +209,55 @@ class SimpleSortTracker:
         if not boxes:
             return
 
+def resize_with_padding(image: np.ndarray, target_size: int) -> np.ndarray:
+    """
+    Resize an image while keeping aspect ratio and pad the remaining area with mid-gray.
+    """
+    if target_size <= 0:
+        raise ValueError("target_size must be positive.")
+
+    height, width = image.shape[:2]
+    if height == 0 or width == 0:
+        return np.full((target_size, target_size, 3), 127, dtype=image.dtype)
+
+    scale = target_size / max(height, width)
+    new_width = max(1, int(round(width * scale)))
+    new_height = max(1, int(round(height * scale)))
+    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(image, (new_width, new_height), interpolation=interpolation)
+    if resized.ndim == 2:
+        resized = cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
+
+    canvas = np.full((target_size, target_size, 3), 127, dtype=resized.dtype)
+    y_offset = (target_size - new_height) // 2
+    x_offset = (target_size - new_width) // 2
+    canvas[y_offset : y_offset + new_height, x_offset : x_offset + new_width] = resized
+    return canvas
+
+def crop_box_with_margin(
+    image: np.ndarray,
+    box: Box,
+    margin_top: int,
+    margin_bottom: int,
+    margin_left: int,
+    margin_right: int,
+) -> Optional[np.ndarray]:
+    """
+    Crop a region specified by the bounding box while applying a pixel margin on each side.
+    """
+    if image is None or image.size == 0:
+        return None
+
+    h, w = image.shape[:2]
+    x1 = max(box.x1 - margin_left, 0)
+    y1 = max(box.y1 - margin_top, 0)
+    x2 = min(box.x2 + margin_right, w - 1)
+    y2 = min(box.y2 + margin_bottom, h - 1)
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    return image[y1 : y2 + 1, x1 : x2 + 1].copy()
+
 class AbstractModel(ABC):
     """AbstractModel
     Base class of the model.
@@ -1164,6 +1213,36 @@ def main():
         help=\
             'Camera horizontal FOV. Default: 90',
     )
+    parser.add_argument(
+        '--crop_size',
+        type=int,
+        default=32,
+        help='Output crop size for classid=19 mouth regions. Resized with aspect ratio preserved and gray padding.',
+    )
+    parser.add_argument(
+        '--crop_margin_top',
+        type=int,
+        default=2,
+        help='Top pixel margin when cropping classid=19 mouth regions.',
+    )
+    parser.add_argument(
+        '--crop_margin_bottom',
+        type=int,
+        default=8,
+        help='Bottom pixel margin when cropping classid=19 mouth regions.',
+    )
+    parser.add_argument(
+        '--crop_margin_left',
+        type=int,
+        default=2,
+        help='Left pixel margin when cropping classid=19 mouth regions.',
+    )
+    parser.add_argument(
+        '--crop_margin_right',
+        type=int,
+        default=2,
+        help='Right pixel margin when cropping classid=19 mouth regions.',
+    )
     args = parser.parse_args()
 
     # runtime check
@@ -1207,6 +1286,15 @@ def main():
     inference_type = inference_type.lower()
     bounding_box_line_width: int = args.bounding_box_line_width
     camera_horizontal_fov: int = args.camera_horizontal_fov
+    crop_size: int = args.crop_size
+    if crop_size <= 0:
+        parser.error("--crop_size must be a positive integer.")
+    crop_margin_top: int = args.crop_margin_top
+    crop_margin_bottom: int = args.crop_margin_bottom
+    crop_margin_left: int = args.crop_margin_left
+    crop_margin_right: int = args.crop_margin_right
+    if any(m < 0 for m in (crop_margin_top, crop_margin_bottom, crop_margin_left, crop_margin_right)):
+        parser.error("All crop margins must be non-negative integers.")
     providers: List[Tuple[str, Dict] | str] = None
 
     if execution_provider == 'cpu':
@@ -1297,6 +1385,12 @@ def main():
     tracker = SimpleSortTracker()
     track_color_cache: Dict[int, np.ndarray] = {}
     tracking_enabled_prev = enable_tracking
+    mouth_margin_top = crop_margin_top
+    mouth_margin_bottom = crop_margin_bottom
+    mouth_margin_left = crop_margin_left
+    mouth_margin_right = crop_margin_right
+    crop_output_root = Path("output") / "mouth_crops"
+    crop_output_root.mkdir(parents=True, exist_ok=True)
     while True:
         image: np.ndarray = None
         if file_paths is not None:
@@ -1314,6 +1408,12 @@ def main():
         debug_image = copy.deepcopy(image)
         debug_image_h = debug_image.shape[0]
         debug_image_w = debug_image.shape[1]
+        base_identifier = (
+            Path(file_paths[file_paths_count]).stem
+            if file_paths is not None
+            else f"{movie_frame_count:08d}"
+        )
+        mouth_crop_index = 0
 
         start_time = time.perf_counter()
         boxes = model(
@@ -1352,6 +1452,21 @@ def main():
         for box in boxes:
             classid: int = box.classid
             color = (255,255,255)
+
+            if classid == 19:
+                crop_image = crop_box_with_margin(
+                    image,
+                    box,
+                    mouth_margin_top,
+                    mouth_margin_bottom,
+                    mouth_margin_left,
+                    mouth_margin_right,
+                )
+                if crop_image is not None:
+                    prepared_crop = resize_with_padding(crop_image, crop_size)
+                    crop_filename = crop_output_root / f"{base_identifier}_mouth_{mouth_crop_index:02d}.png"
+                    cv2.imwrite(str(crop_filename), prepared_crop)
+                    mouth_crop_index += 1
 
             if classid in disable_render_classids:
                 continue

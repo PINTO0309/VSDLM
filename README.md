@@ -117,7 +117,12 @@ uv run python 06_demo_deimv2_onnx_wholebody34_with_edges.py \
 -dlr \
 -dgm \
 -dnm \
--drc 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 20 21 22 23 24 25 26 27 28 29 30 31 32 33
+-drc 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 20 21 22 23 24 25 26 27 28 29 30 31 32 33 \
+--crop_size 48 \
+--crop_margin_top 2 \
+--crop_margin_bottom 8 \
+--crop_margin_left 2 \
+--crop_margin_right 2
 ```
 
 ## Acknowledgements
@@ -125,3 +130,5 @@ uv run python 06_demo_deimv2_onnx_wholebody34_with_edges.py \
 1. https://github.com/hhj1897/face_alignment MIT license
 2. https://github.com/hhj1897/face_detection MIT license
 3. https://github.com/PINTO0309/Face_Mask_Augmentation MIT license
+4. https://github.com/PINTO0309/PINTO_model_zoo/tree/main/472_DEIMv2-Wholebody34 Apache2.0
+
