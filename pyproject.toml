@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "matplotlib==3.10.7",
+    "mediapipe==0.10.21",
     "numpy==1.26.4",
     "onnx==1.19.0",
     "onnxruntime-gpu==1.23.0",

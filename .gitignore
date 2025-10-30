@@ -11,3 +11,7 @@ output*/
 *.mpg
 *.engine
 *.profile
+*.png
+!test.png
+*.jpg
+*.task

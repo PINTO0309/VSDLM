@@ -90,6 +90,27 @@ uv run python dataset/03_batch_mouth_labeler.py \
 --min_kpt_score 0.15
 ```
 
+```bash
+uv run python 06_face_augmentation.py \
+--image test.png \
+--output-dir outputs_face_mouth_pose
+```
+```bash
+uv run python demo/wholebody34/demo_deimv2_onnx_wholebody34_with_edges.py \
+-i outputs_face_mouth_pose/ \
+-m deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx \
+-ep cuda \
+-dwk \
+-dtk \
+-dti \
+-dhd \
+-dhm \
+-dlr \
+-dgm \
+-dnm \
+-drc 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 20 21 22 23 24 25 26 27 28 29 30 31 32 33
+```
+
 ## Acknowledgements
 
 1. https://github.com/hhj1897/face_alignment MIT license
