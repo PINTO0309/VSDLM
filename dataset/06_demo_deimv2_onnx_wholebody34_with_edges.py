@@ -704,6 +704,13 @@ class DEIMv2(AbstractModel):
                     filtered_keypoints_boxes = self._nms(target_objs=keypoints_boxes, iou_threshold=0.20)
                     result_boxes = [box for box in result_boxes if box.classid != target_classid]
                     result_boxes = result_boxes + filtered_keypoints_boxes
+
+                # Keep only the highest scoring mouth detection.
+                mouth_boxes = [box for box in result_boxes if box.classid == 19]
+                if mouth_boxes:
+                    best_mouth = max(mouth_boxes, key=lambda box: box.score)
+                    result_boxes = [box for box in result_boxes if box.classid != 19]
+                    result_boxes.append(best_mouth)
         return result_boxes
 
     def _find_most_relevant_obj(
