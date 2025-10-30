@@ -1356,11 +1356,13 @@ def main():
         providers=providers,
     )
 
+    images_dir_path: Optional[Path] = None
     file_paths: List[str] = None
     cap = None
     video_writer = None
     if images_dir is not None:
-        file_paths = list_image_files(dir_path=images_dir)
+        images_dir_path = Path(images_dir).resolve()
+        file_paths = list_image_files(dir_path=str(images_dir_path))
     else:
         cap = cv2.VideoCapture(
             int(video) if is_parsable_to_int(video) else video
@@ -1389,8 +1391,7 @@ def main():
     mouth_margin_bottom = crop_margin_bottom
     mouth_margin_left = crop_margin_left
     mouth_margin_right = crop_margin_right
-    crop_output_root = Path("output") / "mouth_crops"
-    crop_output_root.mkdir(parents=True, exist_ok=True)
+    output_root_path = Path("output")
     while True:
         image: np.ndarray = None
         if file_paths is not None:
@@ -1413,7 +1414,15 @@ def main():
             if file_paths is not None
             else f"{movie_frame_count:08d}"
         )
-        mouth_crop_index = 0
+        relative_subdir = Path()
+        if images_dir_path is not None and file_paths is not None:
+            current_path = Path(file_paths[file_paths_count]).resolve()
+            try:
+                relative_subdir = current_path.parent.relative_to(images_dir_path)
+            except ValueError:
+                relative_subdir = Path()
+        target_crop_dir = output_root_path / relative_subdir
+        target_crop_dir.mkdir(parents=True, exist_ok=True)
 
         start_time = time.perf_counter()
         boxes = model(
@@ -1464,9 +1473,8 @@ def main():
                 )
                 if crop_image is not None:
                     prepared_crop = resize_with_padding(crop_image, crop_size)
-                    crop_filename = crop_output_root / f"{base_identifier}_mouth_{mouth_crop_index:02d}.png"
+                    crop_filename = target_crop_dir / f"{base_identifier}_mouth.png"
                     cv2.imwrite(str(crop_filename), prepared_crop)
-                    mouth_crop_index += 1
 
             if classid in disable_render_classids:
                 continue
@@ -1828,17 +1836,11 @@ def main():
         if enable_bone_drawing_mode:
             draw_skeleton(image=debug_image, boxes=boxes, color=(0, 255, 255), max_dist_threshold=300)
 
-        if file_paths is not None:
-            basename = os.path.basename(file_paths[file_paths_count])
-            os.makedirs('output', exist_ok=True)
-            cv2.imwrite(f'output/{basename}', debug_image)
-
         if file_paths is not None and output_yolo_format_text:
-            os.makedirs('output', exist_ok=True)
-            cv2.imwrite(f'output/{os.path.splitext(os.path.basename(file_paths[file_paths_count]))[0]}.png', image)
-            cv2.imwrite(f'output/{os.path.splitext(os.path.basename(file_paths[file_paths_count]))[0]}_i.png', image)
-            cv2.imwrite(f'output/{os.path.splitext(os.path.basename(file_paths[file_paths_count]))[0]}_o.png', debug_image)
-            with open(f'output/{os.path.splitext(os.path.basename(file_paths[file_paths_count]))[0]}.txt', 'w') as f:
+            output_dir = output_root_path / relative_subdir
+            output_dir.mkdir(parents=True, exist_ok=True)
+            label_path = output_dir / f"{base_identifier}.txt"
+            with open(label_path, 'w') as f:
                 for box in boxes:
                     classid = box.classid
                     cx = box.cx / debug_image_w
@@ -1847,11 +1849,9 @@ def main():
                     h = abs(box.y2 - box.y1) / debug_image_h
                     f.write(f'{classid} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n')
         elif file_paths is None and output_yolo_format_text:
-            os.makedirs('output', exist_ok=True)
-            cv2.imwrite(f'output/{movie_frame_count:08d}.png', image)
-            cv2.imwrite(f'output/{movie_frame_count:08d}_i.png', image)
-            cv2.imwrite(f'output/{movie_frame_count:08d}_o.png', debug_image)
-            with open(f'output/{movie_frame_count:08d}.txt', 'w') as f:
+            output_root_path.mkdir(parents=True, exist_ok=True)
+            label_path = output_root_path / f"{movie_frame_count:08d}.txt"
+            with open(label_path, 'w') as f:
                 for box in boxes:
                     classid = box.classid
                     cx = box.cx / debug_image_w
