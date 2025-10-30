@@ -14,8 +14,8 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-DEFAULT_MEAN = [0.485, 0.456, 0.406]
-DEFAULT_STD = [0.229, 0.224, 0.225]
+DEFAULT_MEAN = [0.000, 0.000, 0.000]
+DEFAULT_STD = [1.000, 1.000, 1.000]
 
 _PITCH_SUFFIX = re.compile(r"_pitch[mp]\d{3}")
 _YAW_SUFFIX = re.compile(r"_yaw[mp]\d{3}")

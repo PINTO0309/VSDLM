@@ -19,6 +19,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
+from torchvision.transforms import v2 as transforms_v2
 from PIL import Image
 from tqdm.auto import tqdm
 
@@ -276,8 +277,7 @@ def _build_transforms(image_size: int, mean: Sequence[float], std: Sequence[floa
     train_transform = transforms.Compose(
         [
             transforms.Resize((image_size, image_size)),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.1, contrast=0.1),
+            transforms_v2.RandomPhotometricDistort(),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),
         ]
