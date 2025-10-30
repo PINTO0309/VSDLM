@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
 
-SPLIT_COUNT = 5
+SPLIT_COUNT = 10
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--per-talker",
         type=int,
-        default=10,
+        default=1,
         help="Number of folders to copy per talker.",
     )
     parser.add_argument(
