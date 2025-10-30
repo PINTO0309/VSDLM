@@ -272,6 +272,110 @@ def draw_bbox(frame: np.ndarray, bbox: Optional[Box], color=(255, 255, 255)) -> 
     cv2.rectangle(frame, (bbox.x1, bbox.y1), (bbox.x2, bbox.y2), (255, 255, 255), 2, cv2.LINE_AA)
     cv2.rectangle(frame, (bbox.x1, bbox.y1), (bbox.x2, bbox.y2), color, 1, cv2.LINE_AA)
 
+def resize_with_padding(image: np.ndarray, target_size: int) -> np.ndarray:
+    """
+    Resize an image while preserving aspect ratio, padding the remainder with mid-gray.
+    """
+    if target_size <= 0:
+        raise ValueError("target_size must be positive")
+
+    height, width = image.shape[:2]
+    if height == 0 or width == 0:
+        return np.full((target_size, target_size, 3), 127, dtype=np.uint8)
+
+    scale = target_size / max(height, width)
+    new_width = max(1, int(round(width * scale)))
+    new_height = max(1, int(round(height * scale)))
+    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(image, (new_width, new_height), interpolation=interpolation)
+
+    canvas = np.full((target_size, target_size, 3), 127, dtype=np.uint8)
+    y_offset = (target_size - new_height) // 2
+    x_offset = (target_size - new_width) // 2
+    canvas[y_offset : y_offset + new_height, x_offset : x_offset + new_width] = resized
+    return canvas
+
+def extract_square_crop(frame: np.ndarray, bbox: Optional[Box]) -> Optional[np.ndarray]:
+    """
+    Return a square crop around the provided bounding box. The crop is expanded to match the
+    longer edge while clamped to the frame boundaries.
+    """
+    if bbox is None:
+        return None
+
+    frame_height, frame_width = frame.shape[:2]
+    width = bbox.x2 - bbox.x1
+    height = bbox.y2 - bbox.y1
+    side = int(max(width, height))
+    if side <= 0:
+        return None
+
+    center_x = (bbox.x1 + bbox.x2) / 2.0
+    center_y = (bbox.y1 + bbox.y2) / 2.0
+    half = side / 2.0
+
+    x1 = int(round(center_x - half))
+    y1 = int(round(center_y - half))
+    x2 = x1 + side
+    y2 = y1 + side
+
+    if x1 < 0:
+        shift = -x1
+        x1 += shift
+        x2 += shift
+    if y1 < 0:
+        shift = -y1
+        y1 += shift
+        y2 += shift
+    if x2 > frame_width:
+        shift = x2 - frame_width
+        x1 -= shift
+        x2 -= shift
+    if y2 > frame_height:
+        shift = y2 - frame_height
+        y1 -= shift
+        y2 -= shift
+
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(frame_width, x2)
+    y2 = min(frame_height, y2)
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    actual_side = min(x2 - x1, y2 - y1)
+    if actual_side <= 0:
+        return None
+
+    x2 = x1 + actual_side
+    y2 = y1 + actual_side
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+    return crop.copy()
+
+def save_face_crops(
+    frames: Iterable[np.ndarray],
+    boxes: Iterable[Optional[Box]],
+    target_dir: Path,
+    base_name: str,
+    crop_size: int,
+) -> int:
+    """
+    Save square crops of detected faces for each frame. Returns the number of saved crops.
+    """
+    target_dir.mkdir(parents=True, exist_ok=True)
+    saved = 0
+    for idx, (frame, bbox) in enumerate(zip(frames, boxes)):
+        crop = extract_square_crop(frame, bbox)
+        if crop is None:
+            continue
+        output = resize_with_padding(crop, crop_size)
+        filename = target_dir / f"{base_name}_{idx:06d}.png"
+        cv2.imwrite(str(filename), output)
+        saved += 1
+    return saved
+
 def render_talker_summary(
     talker_key: str,
     counts: Dict[str, int],
@@ -415,13 +519,19 @@ def process_video(
     downscale: Optional[int] = None,
     output_fps: Optional[float] = None,
     output_dir: Optional[Path] = None,
-) -> Tuple[Path, Path, Dict[str, int]]:
+    still_dir: Optional[Path] = None,
+    still_only: bool = False,
+    still_crop_size: int = 224,
+) -> Tuple[Optional[Path], Optional[Path], Dict[str, int]]:
     """
     Process a single video and return (csv_path, output_video_path, counts).
     - threshold_front/threshold_side: orientation-specific MAR thresholds for mouth_label
     - smooth_win: moving average window size in frames (1 disables smoothing)
     - downscale: constrain the longer edge to this size (e.g., 960). None keeps the original size.
     - output_fps: output video FPS (None keeps the source FPS)
+    - still_dir: directory where square face crops are saved (one folder per video)
+    - still_only: when True, skip MAR/CSV/video export and only save still crops
+    - still_crop_size: final edge length of saved still images (with padding)
     """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -449,7 +559,6 @@ def process_video(
     output_dir = output_dir or video_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    fourcc = pick_codec_for_mp4()
     base_name = video_path.stem
     base_name_lower = base_name.lower()
     # Choose per-orientation threshold based on filename hints
@@ -476,10 +585,11 @@ def process_video(
             frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
 
         mar, face_box, landmarks = mouth_estimator.mar(frame)
-        frame_mars.append(mar)
         frames_bgr.append(frame)
         frame_face_bboxes.append(face_box)
-        frame_landmarks.append(landmarks)
+        if not still_only:
+            frame_mars.append(mar)
+            frame_landmarks.append(landmarks)
 
         idx += 1
         if total > 0 and idx % 200 == 0:
@@ -487,6 +597,27 @@ def process_video(
 
     cap.release()
 
+    saved_crops = 0
+    if still_dir is not None:
+        saved_crops = save_face_crops(
+            frames_bgr,
+            frame_face_bboxes,
+            still_dir,
+            base_name,
+            still_crop_size,
+        )
+
+    if still_only:
+        total_frames = len(frames_bgr)
+        counts = {
+            "unknown": 0,
+            "closed": 0,
+            "open": 0,
+            "total_frames": total_frames,
+        }
+        return None, None, counts
+
+    fourcc = pick_codec_for_mp4()
     # Smooth MAR series
     smoothed = moving_average(frame_mars, smooth_win)
 
@@ -536,10 +667,18 @@ def process_video(
         else:
             text = "unknown"
             color = (200, 200, 200)
-        draw_landmark(frame, landmarks, color=color, min_score=mouth_estimator.min_score, radius=2, thickness=1)
-        draw_caption(frame, text, color=color)
-        draw_bbox(frame, box, color=color)
-        writer.write(frame)
+        annotated = frame.copy()
+        draw_landmark(
+            annotated,
+            landmarks,
+            color=color,
+            min_score=mouth_estimator.min_score,
+            radius=2,
+            thickness=1,
+        )
+        draw_caption(annotated, text, color=color)
+        draw_bbox(annotated, box, color=color)
+        writer.write(annotated)
 
     writer.release()
     counts = {
@@ -562,6 +701,8 @@ def main():
     ap.add_argument("--downscale_long_edge", type=int, default=None, help="Downscale long edge (e.g., 960). None=original")
     ap.add_argument("--output_fps", type=float, default=None, help="Override output video FPS. None=source FPS")
     ap.add_argument("--output_dir", type=str, default="output", help="Directory to store output CSV and videos")
+    ap.add_argument("--still_only", action="store_true", help="Only export still crops (skips MAR analysis, videos, and CSVs)")
+    ap.add_argument("--still_crop_size", type=int, default=224, help="Resize still crops to this square size with gray padding")
     ap.add_argument("--detection_model", type=str, default=None, help="Path to DEIMv2 ONNX model. Default: fan/deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx")
     ap.add_argument("--alignment_model", type=str, default=None, help="Path to FAN ONNX model. Default: fan/2dfan4_1x3x256x256.onnx")
     ap.add_argument("--execution_provider", type=str, choices=["cpu", "cuda", "tensorrt"], default="tensorrt", help="ONNXRuntime execution provider (default: tensorrt)")
@@ -579,6 +720,8 @@ def main():
         raise FileNotFoundError(f"Detection model not found: {detection_model_path}")
     if not alignment_model_path.exists():
         raise FileNotFoundError(f"Alignment model not found: {alignment_model_path}")
+    if args.still_crop_size <= 0:
+        raise ValueError("--still_crop_size must be a positive integer")
 
     providers = resolve_providers(args.execution_provider, detection_model_path.parent)
     mouth_estimator = FanMouth(
@@ -590,6 +733,8 @@ def main():
 
     output_root = Path(args.output_dir).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    still_output_root = output_root.parent / f"{output_root.name}_still_image"
+    still_output_root.mkdir(parents=True, exist_ok=True)
 
     if args.src_file:
         video_path = Path(args.src_file).expanduser().resolve()
@@ -597,7 +742,7 @@ def main():
             raise FileNotFoundError(f"Not found: {video_path}")
         if video_path.suffix.lower() not in VIDEO_EXTS:
             raise ValueError(f"Unsupported file type: {video_path.suffix}")
-        videos = [(video_path, output_root)]
+        videos = [(video_path, output_root, still_output_root / video_path.stem)]
     else:
         src = Path(args.src_dir).expanduser().resolve()
         if not src.exists():
@@ -617,7 +762,8 @@ def main():
                 rel_parent = Path()
             target_dir = output_root / rel_parent
             target_dir.mkdir(parents=True, exist_ok=True)
-            videos.append((vp, target_dir))
+            still_target_dir = still_output_root / rel_parent / vp.stem
+            videos.append((vp, target_dir, still_target_dir))
 
     processed_results: List[Dict[str, Any]] = []
     talker_summaries: Dict[str, Dict[str, Any]] = {}
@@ -625,7 +771,7 @@ def main():
     if (not args.src_file) and videos:
         progress_bar = tqdm(total=len(videos), desc="Videos", unit="video", dynamic_ncols=True)
 
-    for idx, (vp, out_dir) in enumerate(videos):
+    for idx, (vp, out_dir, still_dir) in enumerate(videos):
         if progress_bar is not None:
             progress_bar.set_postfix_str(vp.name, refresh=False)
         try:
@@ -638,7 +784,12 @@ def main():
                 downscale=args.downscale_long_edge,
                 output_fps=args.output_fps,
                 output_dir=out_dir,
+                still_dir=still_dir,
+                still_only=args.still_only,
+                still_crop_size=args.still_crop_size,
             )
+            if args.still_only:
+                continue
             processed_results.append({"video": str(vp), "counts": counts})
             talker_key = extract_talker_key(vp.stem)
             if talker_key:
@@ -703,6 +854,10 @@ def main():
 
     if progress_bar is not None:
         progress_bar.close()
+
+    if args.still_only:
+        print("[INFO] Still image export completed.")
+        return
 
     if not processed_results:
         print("[WARN] No videos processed successfully.")

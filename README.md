@@ -88,6 +88,14 @@ uv run python dataset/03_batch_mouth_labeler.py \
 --output_dir dataset/output_grid_audio_visual_speech_corpus \
 --threshold_front 0.15 \
 --min_kpt_score 0.15
+
+# Still only mode and Process videos in a folder in bulk
+uv run python dataset/03_batch_mouth_labeler.py \
+--src_dir dataset/grid_audio_visual_speech_corpus \
+--output_dir dataset/output_grid_audio_visual_speech_corpus \
+--threshold_front 0.15 \
+--min_kpt_score 0.15 \
+--still_only
 ```
 
 ```bash
