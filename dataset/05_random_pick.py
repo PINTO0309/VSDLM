@@ -6,11 +6,15 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
 
+SPLIT_COUNT = 10
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Randomly copy a fixed number of folders per talker from the "
             "'output_grid_audio_visual_speech_corpus_still_image' dataset into "
+            "ten equally sized splits under "
             "'output_grid_audio_visual_speech_corpus_still_image_partial'."
         )
     )
@@ -89,25 +93,56 @@ def select_folders_per_talker(
         if len(ordered) <= sample_size:
             selections[talker] = ordered
             continue
-        selections[talker] = rng.sample(ordered, sample_size)
+        sampled = rng.sample(ordered, sample_size)
+        selections[talker] = sorted(sampled, key=lambda p: p.name)
     return selections
 
 
-def prepare_destination(dest_dir: Path, clear: bool) -> None:
-    if clear and dest_dir.exists():
-        shutil.rmtree(dest_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
+def destinations_from_base(base: Path, count: int = SPLIT_COUNT) -> List[Path]:
+    return [base.parent / f"{base.name}{idx}" for idx in range(1, count + 1)]
 
 
-def copy_folders(selections: Dict[str, Sequence[Path]], dest_dir: Path) -> None:
+def prepare_destinations(dest_dirs: Sequence[Path], clear: bool) -> None:
+    for dest_dir in dest_dirs:
+        if clear and dest_dir.exists():
+            shutil.rmtree(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+
+def copy_folders(
+    selections: Dict[str, Sequence[Path]],
+    dest_dirs: Sequence[Path],
+) -> int:
+    ordered_entries: List[tuple[str, Path]] = []
     for talker in sorted(selections):
-        folders = selections[talker]
+        folders = sorted(selections[talker], key=lambda p: p.name)
         for folder in folders:
-            dest_path = dest_dir / folder.name
-            if dest_path.exists():
-                shutil.rmtree(dest_path)
-            shutil.copytree(folder, dest_path)
-        print(f"{talker}: copied {len(folders)} folders")
+            ordered_entries.append((talker, folder))
+
+    total = len(ordered_entries)
+    if total and total % len(dest_dirs) != 0:
+        raise RuntimeError(
+            f"Total selected folders ({total}) cannot be evenly split into {len(dest_dirs)} destinations."
+        )
+
+    talker_counts: Dict[str, int] = {}
+    dest_counts: Dict[Path, int] = {dest: 0 for dest in dest_dirs}
+
+    for idx, (talker, folder) in enumerate(ordered_entries):
+        talker_counts[talker] = talker_counts.get(talker, 0) + 1
+        dest_dir = dest_dirs[idx % len(dest_dirs)]
+        dest_path = dest_dir / folder.name
+        if dest_path.exists():
+            shutil.rmtree(dest_path)
+        shutil.copytree(folder, dest_path)
+        dest_counts[dest_dir] += 1
+
+    for talker in sorted(talker_counts):
+        print(f"{talker}: copied {talker_counts[talker]} folders")
+    for dest_dir in dest_dirs:
+        print(f"{dest_dir}: total {dest_counts[dest_dir]} folders")
+
+    return total
 
 
 def main() -> None:
@@ -121,11 +156,18 @@ def main() -> None:
         raise RuntimeError(f"No talker folders found in {args.src}")
 
     selections = select_folders_per_talker(grouped, args.per_talker, rng)
-    prepare_destination(args.dst, args.clear_dst)
-    copy_folders(selections, args.dst)
+    dest_dirs = destinations_from_base(args.dst)
+    total_expected = sum(len(paths) for paths in selections.values())
+    if total_expected and total_expected % len(dest_dirs) != 0:
+        raise RuntimeError(
+            f"Selected {total_expected} folders; adjust --per-talker so it is divisible by {len(dest_dirs)}."
+        )
+    prepare_destinations(dest_dirs, args.clear_dst)
+    total_copied = copy_folders(selections, dest_dirs)
 
-    total = sum(len(paths) for paths in selections.values())
-    print(f"Copied {total} folders into {args.dst}")
+    print(
+        f"Copied {total_copied} folders into {len(dest_dirs)} destinations derived from base {args.dst}"
+    )
 
 
 if __name__ == "__main__":
