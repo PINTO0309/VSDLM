@@ -9,7 +9,13 @@ Visual-only speech detection driven by lip movements.
 - The training loop relies on `BCEWithLogitsLoss`, `pos_weight`, and a `WeightedRandomSampler` to stabilise optimisation under class imbalance; inference produces sigmoid probabilities.
 - Training history, validation metrics, optional test predictions, checkpoints, configuration JSON, and ONNX exports are produced automatically.
 - Per-epoch checkpoints named like `vsdlm_epoch_0001.pt` are retained (latest 10), as well as the best checkpoints named `vsdlm_best_epoch0004_f10.9321.pt` (also latest 10).
-- The backbone can be switched with `--arch_variant` (`baseline` depthwise separable CNN, `inverted_se` MobileNetV2-style with squeeze-and-excitation, or `convnext` for a ConvNeXt-inspired stack). Width/depth remain adjustable via `--base_channels` and `--num_blocks`.
+- The backbone can be switched with `--arch_variant`. Supported combinations with `--head_variant` are:
+
+  | `--arch_variant` | 既定 (`--head_variant auto`) | 明示的に選択可能なヘッド | 備考 |
+  |------------------|-----------------------------|---------------------------|------|
+  | `baseline`       | `avg`                       | `avg`, `avgmax_mlp`       | `transformer`/`mlp_mixer` を使う場合は `--token_mixer_grid` が特徴マップサイズを割り切る値になるよう調整が必要（そのままだと ONNX 変換エラー）。 |
+  | `inverted_se`    | `avgmax_mlp`                | `avg`, `avgmax_mlp`       | `transformer`/`mlp_mixer` を使う場合は上記と同じ制約あり。 |
+  | `convnext`       | `transformer`               | `avg`, `avgmax_mlp`, `transformer`, `mlp_mixer` | グリッド調整なしで ONNX 出力に対応。 |
 - The classification head is selected with `--head_variant` (`avg`, `avgmax_mlp`, `transformer`, `mlp_mixer`, or `auto` which derives a sensible default from the backbone).
 - Mixed precision can be enabled with `--use_amp` when CUDA is available.
 - Resume training with `--resume path/to/vsdlm_epoch_XXXX.pt`; all optimiser/scheduler/AMP states and history are restored.
