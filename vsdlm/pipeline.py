@@ -236,6 +236,8 @@ class TrainConfig:
     base_channels: int = 32
     num_blocks: int = 4
     dropout: float = 0.3
+    arch_variant: str = "baseline"
+    head_variant: str = "auto"
     device: str = "auto"
     resume_from: Optional[Path] = None
     use_amp: bool = False
@@ -665,6 +667,8 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
         base_channels=config.base_channels,
         num_blocks=config.num_blocks,
         dropout=config.dropout,
+        arch_variant=config.arch_variant,
+        head_variant=config.head_variant,
     )
     model = VSDLM(model_config).to(device)
     base_metadata = {
@@ -1196,6 +1200,20 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--base_channels", type=int, default=32)
     train_parser.add_argument("--num_blocks", type=int, default=4)
     train_parser.add_argument("--dropout", type=float, default=0.3)
+    train_parser.add_argument(
+        "--arch_variant",
+        type=str,
+        default="baseline",
+        choices=["baseline", "inverted_se", "convnext"],
+        help="Backbone architecture choice.",
+    )
+    train_parser.add_argument(
+        "--head_variant",
+        type=str,
+        default="auto",
+        choices=["auto", "avg", "avgmax_mlp", "transformer", "mlp_mixer"],
+        help="Classification head configuration.",
+    )
     train_parser.add_argument("--device", type=str, default="auto")
     train_parser.add_argument("--resume", type=Path, help="Resume training from a checkpoint file.")
     train_parser.add_argument("--use_amp", action="store_true", help="Enable mixed precision training (CUDA only).")
@@ -1244,6 +1262,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             base_channels=args.base_channels,
             num_blocks=args.num_blocks,
             dropout=args.dropout,
+            arch_variant=args.arch_variant,
+            head_variant=args.head_variant,
             device=args.device,
             resume_from=args.resume,
             use_amp=args.use_amp,

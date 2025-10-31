@@ -9,12 +9,15 @@ Visual-only speech detection driven by lip movements.
 - The training loop relies on `BCEWithLogitsLoss`, `pos_weight`, and a `WeightedRandomSampler` to stabilise optimisation under class imbalance; inference produces sigmoid probabilities.
 - Training history, validation metrics, optional test predictions, checkpoints, configuration JSON, and ONNX exports are produced automatically.
 - Per-epoch checkpoints named like `vsdlm_epoch_0001.pt` are retained (latest 10), as well as the best checkpoints named `vsdlm_best_epoch0004_f10.9321.pt` (also latest 10).
-- The model is a lightweight depthwise-separable CNN whose width/depth can be tuned via `--base_channels` and `--num_blocks`.
+- The backbone can be switched with `--arch_variant` (`baseline` depthwise separable CNN, `inverted_se` MobileNetV2-style with squeeze-and-excitation, or `convnext` for a ConvNeXt-inspired stack). Width/depth remain adjustable via `--base_channels` and `--num_blocks`.
+- The classification head is selected with `--head_variant` (`avg`, `avgmax_mlp`, `transformer`, `mlp_mixer`, or `auto` which derives a sensible default from the backbone).
 - Mixed precision can be enabled with `--use_amp` when CUDA is available.
 - Resume training with `--resume path/to/vsdlm_epoch_XXXX.pt`; all optimiser/scheduler/AMP states and history are restored.
 - Loss/accuracy/F1 metrics are logged to TensorBoard under `output_dir`, and `tqdm` progress bars expose per-epoch progress for train/val/test loops.
 
 ### 1. Training
+
+Baseline depthwise-separable CNN:
 
 ```bash
 uv run python -m vsdlm train \
@@ -27,6 +30,47 @@ uv run python -m vsdlm train \
 --image_size 30x48 \
 --base_channels 32 \
 --num_blocks 4 \
+--arch_variant baseline \
+--seed 42 \
+--device auto \
+--use_amp
+```
+
+Inverted residual + SE variant (recommended for higher capacity):
+
+```bash
+uv run python -m vsdlm train \
+--data_root dataset/data \
+--output_dir runs/vsdlm_is \
+--epochs 50 \
+--batch_size 256 \
+--train_ratio 0.8 \
+--val_ratio 0.2 \
+--image_size 30x48 \
+--base_channels 32 \
+--num_blocks 4 \
+--arch_variant inverted_se \
+--head_variant auto \
+--seed 42 \
+--device auto \
+--use_amp
+```
+
+ConvNeXt-style backbone with transformer head over pooled tokens:
+
+```bash
+uv run python -m vsdlm train \
+--data_root dataset/data \
+--output_dir runs/vsdlm_convnext \
+--epochs 50 \
+--batch_size 256 \
+--train_ratio 0.8 \
+--val_ratio 0.2 \
+--image_size 30x48 \
+--base_channels 32 \
+--num_blocks 4 \
+--arch_variant convnext \
+--head_variant transformer \
 --seed 42 \
 --device auto \
 --use_amp
