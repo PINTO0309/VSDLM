@@ -88,6 +88,24 @@ def _resolve_onnx_providers(provider: str) -> List[Any]:
     if key == "cuda":
         return ["CUDAExecutionProvider", "CPUExecutionProvider"]
     if key == "tensorrt":
+        providers = [
+            (
+                "TensorrtExecutionProvider",
+                {
+                    'trt_engine_cache_enable': True, # .engine, .profile export
+                    'trt_engine_cache_path': '.',
+                    # 'trt_max_workspace_size': 4e9, # Maximum workspace size for TensorRT engine (1e9 ≈ 1GB)
+                    # onnxruntime>=1.21.0 breaking changes
+                    # https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html#data-dependant-shape-dds-ops
+                    # https://github.com/microsoft/onnxruntime/pull/22681/files
+                    # https://github.com/microsoft/onnxruntime/pull/23893/files
+                    'trt_op_types_to_exclude': 'NonMaxSuppression,NonZero,RoiAlign',
+                    "trt_fp16_enable": True,
+                }
+            ),
+            "CUDAExecutionProvider",
+            'CPUExecutionProvider',
+        ]
         return ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
     return ["CPUExecutionProvider"]
 

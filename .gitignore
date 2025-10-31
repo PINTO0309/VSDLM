@@ -8,6 +8,8 @@ runs/
 annotation*/
 debug/
 data/
+data2/
+self_aug/
 *.pth
 *.onnx
 *.tar.gz
