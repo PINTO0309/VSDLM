@@ -276,7 +276,7 @@ def create_dataloader(
     dataset: Dataset,
     batch_size: int,
     shuffle: bool = False,
-    num_workers: int = 4,
+    num_workers: int = 8,
     sampler: Optional[WeightedRandomSampler] = None,
     pin_memory: bool = True,
 ) -> DataLoader:
