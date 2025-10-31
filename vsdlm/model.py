@@ -19,7 +19,7 @@ class ModelConfig:
     expansion: int = 4
     se_reduction: int = 8
     head_variant: str = "auto"
-    token_mixer_grid: tuple[int, int] = (3, 2)
+    token_mixer_grid: tuple[int, int] = (2, 3)
     token_mixer_layers: int = 2
 
 
