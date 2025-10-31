@@ -9,6 +9,7 @@ https://github.com/user-attachments/assets/c1813290-e7a6-4ce1-b44d-4dcfad6f8837
 
 |Variant|Size|F1|ONNX|
 |:-:|:-:|:-:|:-:|
+|N|176 KB|0.9586|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_n.onnx)|
 |S|494 KB|0.9696|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_s.onnx)|
 |M|1.7 MB|0.9801|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_m.onnx)|
 |L|6.4 MB|0.9891|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_l.onnx)|
