@@ -273,6 +273,10 @@ uv run python 07_demo_deimv2_onnx_wholebody34_with_edges.py \
 count=351473 | height mean=29.67px median=29.00px | width mean=48.00px median=48.00px
 ```
 
+## Arch
+
+<img width="300" alt="vsdlm_s" src="https://github.com/user-attachments/assets/f2d42767-43f0-4433-ae62-882a70fb65cc" />
+
 ## Acknowledgements
 
 1. https://zenodo.org/records/3625687 - CC BY 4.0 License
