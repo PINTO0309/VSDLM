@@ -279,6 +279,23 @@ count=351473 | height mean=29.67px median=29.00px | width mean=48.00px median=48
 
 <img width="300" alt="vsdlm_s" src="https://github.com/user-attachments/assets/f2d42767-43f0-4433-ae62-882a70fb65cc" />
 
+## Citation
+
+If you use VSDLM in your research, please cite the Zenodo release:
+
+```bibtex
+@software{hyodo2025vsdlm,
+  author    = {Katsuya Hyodo},
+  title     = {PINTO0309/VSDLM},
+  month     = {10},
+  year      = {2025},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.17494543},
+  url       = {https://github.com/PINTO0309/vsdlm},
+  abstract  = {Visual only speech detection by lip movement.},
+}
+```
+
 ## Acknowledgements
 
 1. https://zenodo.org/records/3625687 - CC BY 4.0 License
