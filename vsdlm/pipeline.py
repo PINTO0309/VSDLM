@@ -912,7 +912,7 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
                 best_accuracy=accuracy_value,
                 best_f1=score_value,
             )
-            best_checkpoint_path = config.output_dir / f"vsdlm_best_epoch{epoch:04d}_f1{score_value:.4f}.pt"
+            best_checkpoint_path = config.output_dir / f"vsdlm_best_epoch{epoch:04d}_f1_{score_value:.4f}.pt"
             best_state["checkpoint_path"] = str(best_checkpoint_path)
             torch.save(best_checkpoint, best_checkpoint_path)
             _prune_checkpoints(config.output_dir, "vsdlm_best_", 10)
