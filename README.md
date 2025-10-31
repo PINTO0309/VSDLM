@@ -1,6 +1,10 @@
 # VSDLM
 Visual-only speech detection driven by lip movements.
 
+There are countless situations where you can't hear the audio, and it's really frustrating.
+
+https://github.com/user-attachments/assets/c1813290-e7a6-4ce1-b44d-4dcfad6f8837
+
 ## Training Pipeline
 
 - Use the images located under `dataset/output/002_xxxx_front_yyyyyy` together with their annotations in `dataset/output/002_xxxx_front.csv`.
