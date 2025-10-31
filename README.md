@@ -8,7 +8,7 @@ Visual-only speech detection driven by lip movements.
 - Every augmented image that originates from the same `still_image` stays in the same split to prevent leakage.
 - The training loop relies on `BCEWithLogitsLoss`, `pos_weight`, and a `WeightedRandomSampler` to stabilise optimisation under class imbalance; inference produces sigmoid probabilities.
 - Training history, validation metrics, optional test predictions, checkpoints, configuration JSON, and ONNX exports are produced automatically.
-- Per-epoch checkpoints named like `vsdlm_epoch_0001.pt` are retained (latest 10), as well as the best checkpoints named `vsdlm_best_epoch0004_acc0.9321.pt` (also latest 10).
+- Per-epoch checkpoints named like `vsdlm_epoch_0001.pt` are retained (latest 10), as well as the best checkpoints named `vsdlm_best_epoch0004_f10.9321.pt` (also latest 10).
 - The model is a lightweight depthwise-separable CNN whose width/depth can be tuned via `--base_channels` and `--num_blocks`.
 - Mixed precision can be enabled with `--use_amp` when CUDA is available.
 - Resume training with `--resume path/to/vsdlm_epoch_XXXX.pt`; all optimiser/scheduler/AMP states and history are restored.
@@ -17,7 +17,6 @@ Visual-only speech detection driven by lip movements.
 ### 1. Training
 
 ```bash
-# `--image_size` must be specified as a single integer (e.g. '48') or as 'HEIGHTxWIDTH' (e.g. '30x48').
 uv run python -m vsdlm train \
 --data_root dataset/data \
 --output_dir runs/vsdlm \
@@ -33,7 +32,8 @@ uv run python -m vsdlm train \
 --use_amp
 ```
 
-- Outputs include the latest 10 `vsdlm_epoch_*.pt`, the latest 10 `vsdlm_best_epochXXXX_accYYYY.pt`, `history.json`, `summary.json`, optional `test_predictions.csv`, and `train.log`.
+- Outputs include the latest 10 `vsdlm_epoch_*.pt`, the latest 10 `vsdlm_best_epochXXXX_f1YYYY.pt` (highest validation F1, or training F1 when no validation split), `history.json`, `summary.json`, optional `test_predictions.csv`, and `train.log`.
+- After every epoch a confusion matrix and ROC curve are saved under `runs/vsdlm/diagnostics/<split>/confusion_<split>_epochXXXX.png` and `roc_<split>_epochXXXX.png`.
 - `--image_size` accepts either a single integer for square crops (e.g. `--image_size 48`) or `HEIGHTxWIDTH` to resize non-square frames (e.g. `--image_size 64x48`).
 - Add `--resume <checkpoint>` to continue from an earlier epoch. Remember that `--epochs` indicates the desired total epoch count (e.g. resuming `--epochs 40` after training to epoch 30 will run 10 additional epochs).
 - Launch TensorBoard with:
@@ -45,7 +45,7 @@ uv run python -m vsdlm train \
 
 ```bash
 uv run python -m vsdlm predict \
---checkpoint runs/vsdlm/vsdlm_best_epoch0004_acc0.9321.pt \
+--checkpoint runs/vsdlm/vsdlm_best_epoch0004_f10.9321.pt \
 --inputs dataset/output/002_0005_front_028001 \
 --output runs/vsdlm/predictions.csv
 ```
@@ -57,7 +57,7 @@ uv run python -m vsdlm predict \
 
 ```bash
 uv run python -m vsdlm exportonnx \
---checkpoint runs/vsdlm/vsdlm_best_epoch0004_acc0.9321.pt \
+--checkpoint runs/vsdlm/vsdlm_best_epoch0004_f10.9321.pt \
 --output runs/vsdlm/vsdlm.onnx \
 --opset 17
 ```

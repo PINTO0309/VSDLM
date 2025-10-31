@@ -23,6 +23,7 @@ from torchvision import transforms
 from torchvision.transforms import v2 as transforms_v2
 from PIL import Image
 from tqdm.auto import tqdm
+from matplotlib import pyplot as plt
 
 from .data import (
     DEFAULT_MEAN,
@@ -403,14 +404,24 @@ def _run_epoch(
     scaler: Optional[Any] = None,
     autocast_enabled: bool = False,
     progress_desc: Optional[str] = None,
-) -> Dict[str, float]:
+    collect_outputs: bool = False,
+) -> Tuple[Dict[str, float], Optional[Dict[str, np.ndarray]]]:
     if dataloader is None or len(dataloader.dataset) == 0:
-        return {"loss": float("nan"), "accuracy": float("nan"), "precision": float("nan"), "recall": float("nan"), "f1": float("nan")}
+        empty_metrics = {
+            "loss": float("nan"),
+            "accuracy": float("nan"),
+            "precision": float("nan"),
+            "recall": float("nan"),
+            "f1": float("nan"),
+        }
+        return empty_metrics, None
 
     train_mode = optimizer is not None
     model.train(mode=train_mode)
 
     stats = {"loss": 0.0, "samples": 0, "tp": 0, "tn": 0, "fp": 0, "fn": 0}
+    collected_probs: List[torch.Tensor] = []
+    collected_labels: List[torch.Tensor] = []
 
     iterator = dataloader
     if progress_desc:
@@ -440,12 +451,17 @@ def _run_epoch(
         stats["loss"] += loss.detach().item() * batch_size
         stats["samples"] += batch_size
 
-        preds = (torch.sigmoid(logits) >= 0.5).long()
+        probs = torch.sigmoid(logits)
+        preds = (probs >= 0.5).long()
         labels_int = labels.long()
         stats["tp"] += ((preds == 1) & (labels_int == 1)).sum().item()
         stats["tn"] += ((preds == 0) & (labels_int == 0)).sum().item()
         stats["fp"] += ((preds == 1) & (labels_int == 0)).sum().item()
         stats["fn"] += ((preds == 0) & (labels_int == 1)).sum().item()
+
+        if collect_outputs:
+            collected_probs.append(probs.detach().cpu())
+            collected_labels.append(labels.detach().cpu())
 
     assert stats["samples"] > 0, "No samples processed during epoch."
 
@@ -455,13 +471,110 @@ def _run_epoch(
     recall = stats["tp"] / (stats["tp"] + stats["fn"]) if (stats["tp"] + stats["fn"]) > 0 else 0.0
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
-    return {
+    metrics = {
         "loss": avg_loss,
         "accuracy": accuracy,
         "precision": precision,
         "recall": recall,
         "f1": f1,
     }
+    extras = None
+    if collect_outputs:
+        all_probs = torch.cat(collected_probs).squeeze().numpy() if collected_probs else np.array([], dtype=float)
+        all_labels = torch.cat(collected_labels).squeeze().numpy() if collected_labels else np.array([], dtype=float)
+        extras = {
+            "probs": all_probs.astype(float, copy=False),
+            "labels": all_labels.astype(int, copy=False),
+        }
+    return metrics, extras
+
+
+def _compute_binary_roc_curve(labels: np.ndarray, scores: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray, float]]:
+    if labels.size == 0 or scores.size == 0:
+        return None
+    positives = np.sum(labels == 1)
+    negatives = np.sum(labels == 0)
+    if positives == 0 or negatives == 0:
+        return None
+
+    order = np.argsort(scores)[::-1]
+    sorted_labels = labels[order]
+    true_positive_cumsum = np.cumsum(sorted_labels == 1, dtype=float)
+    false_positive_cumsum = np.cumsum(sorted_labels == 0, dtype=float)
+
+    tpr = np.concatenate(([0.0], true_positive_cumsum / positives, [1.0]))
+    fpr = np.concatenate(([0.0], false_positive_cumsum / negatives, [1.0]))
+    auc = float(np.trapz(tpr, fpr))
+    return fpr, tpr, auc
+
+
+def _save_epoch_diagnostics(
+    labels: np.ndarray,
+    scores: np.ndarray,
+    split_name: str,
+    epoch: int,
+    output_dir: Path,
+) -> None:
+    if labels.size == 0 or scores.size == 0:
+        return
+
+    split_dir = output_dir / "diagnostics" / split_name
+    split_dir.mkdir(parents=True, exist_ok=True)
+
+    preds = (scores >= 0.5).astype(int)
+    tn = int(np.sum((labels == 0) & (preds == 0)))
+    fp = int(np.sum((labels == 0) & (preds == 1)))
+    fn = int(np.sum((labels == 1) & (preds == 0)))
+    tp = int(np.sum((labels == 1) & (preds == 1)))
+    confusion = np.array([[tn, fp], [fn, tp]], dtype=int)
+
+    cm_fig, cm_ax = plt.subplots(figsize=(4, 4))
+    cm_im = cm_ax.imshow(confusion, interpolation="nearest", cmap="Blues")
+    cm_ax.figure.colorbar(cm_im, ax=cm_ax, fraction=0.046, pad=0.04)
+    cm_ax.set(
+        xticks=[0, 1],
+        yticks=[0, 1],
+        xticklabels=[LABEL_MAP[0], LABEL_MAP[1]],
+        yticklabels=[LABEL_MAP[0], LABEL_MAP[1]],
+        xlabel="Predicted label",
+        ylabel="True label",
+        title=f"{split_name.capitalize()} Confusion Matrix (epoch {epoch})",
+    )
+    thresh = confusion.max() / 2 if confusion.max() > 0 else 0.5
+    for i in range(confusion.shape[0]):
+        for j in range(confusion.shape[1]):
+            cm_ax.text(
+                j,
+                i,
+                f"{confusion[i, j]}",
+                ha="center",
+                va="center",
+                color="white" if confusion[i, j] > thresh else "black",
+            )
+    cm_fig.tight_layout()
+    cm_path = split_dir / f"confusion_{split_name}_epoch{epoch:04d}.png"
+    cm_fig.savefig(cm_path, dpi=150)
+    plt.close(cm_fig)
+
+    roc_payload = _compute_binary_roc_curve(labels, scores)
+    roc_fig, roc_ax = plt.subplots(figsize=(5, 4))
+    roc_ax.set_xlim(0, 1)
+    roc_ax.set_ylim(0, 1)
+    roc_ax.set_xlabel("False Positive Rate")
+    roc_ax.set_ylabel("True Positive Rate")
+    if roc_payload is None:
+        roc_ax.set_title(f"{split_name.capitalize()} ROC (epoch {epoch})")
+        roc_ax.text(0.5, 0.5, "ROC unavailable (single-class data)", ha="center", va="center")
+    else:
+        fpr, tpr, auc = roc_payload
+        roc_ax.plot(fpr, tpr, label=f"AUC = {auc:.3f}")
+        roc_ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1)
+        roc_ax.set_title(f"{split_name.capitalize()} ROC (epoch {epoch})")
+        roc_ax.legend(loc="lower right")
+    roc_fig.tight_layout()
+    roc_path = split_dir / f"roc_{split_name}_epoch{epoch:04d}.png"
+    roc_fig.savefig(roc_path, dpi=150)
+    plt.close(roc_fig)
 
 
 def _evaluate_predictions(model: nn.Module, dataloader: DataLoader, device: torch.device) -> List[Dict[str, Any]]:
@@ -577,6 +690,7 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
     start_epoch = 1
     best_state: Optional[Dict[str, Any]] = None
     best_val_loss = math.inf
+    best_f1 = float("-inf")
     best_checkpoint_path: Optional[Path] = None
 
     if config.resume_from:
@@ -632,6 +746,23 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
                 resume_train_metrics,
                 resume_val_metrics if isinstance(resume_val_metrics, dict) else None,
             )
+        best_f1_candidate = resume_payload.get("best_f1")
+        if best_f1_candidate is not None:
+            best_f1 = float(best_f1_candidate)
+        else:
+            candidate_sources = [
+                resume_val_metrics if isinstance(resume_val_metrics, dict) else None,
+                resume_train_metrics if isinstance(resume_train_metrics, dict) else None,
+            ]
+            extracted_f1 = None
+            for source in candidate_sources:
+                if source and source.get("f1") is not None and not math.isnan(source.get("f1")):
+                    extracted_f1 = float(source["f1"])
+                    break
+            if extracted_f1 is not None:
+                best_f1 = extracted_f1
+            else:
+                best_f1 = float("-inf")
 
         best_state = {
             "epoch": resume_payload.get("best_epoch", resume_epoch),
@@ -643,8 +774,10 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
             "val_metrics": resume_val_metrics,
             "best_val_loss": best_val_loss,
             "best_accuracy": best_accuracy,
+            "best_f1": best_f1,
+            "checkpoint_path": str(resume_path),
         }
-        best_checkpoint_path = str(resume_path)
+        best_checkpoint_path = resume_path
 
         if history:
             history = [entry for entry in history if entry.get("epoch", 0) < start_epoch]
@@ -657,7 +790,7 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
             )
 
     for epoch in range(start_epoch, config.epochs + 1):
-        train_metrics = _run_epoch(
+        train_metrics, train_outputs = _run_epoch(
             model,
             train_loader,
             criterion,
@@ -666,9 +799,10 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
             scaler=scaler,
             autocast_enabled=amp_enabled,
             progress_desc=f"Train {epoch}/{config.epochs}",
+            collect_outputs=True,
         )
-        val_metrics = (
-            _run_epoch(
+        if val_loader:
+            val_metrics, val_outputs = _run_epoch(
                 model,
                 val_loader,
                 criterion,
@@ -677,10 +811,10 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
                 scaler=None,
                 autocast_enabled=amp_enabled,
                 progress_desc=f"Val   {epoch}/{config.epochs}",
+                collect_outputs=True,
             )
-            if val_loader
-            else None
-        )
+        else:
+            val_metrics, val_outputs = None, None
 
         if val_metrics:
             scheduler.step(val_metrics["loss"])
@@ -713,6 +847,13 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
             tb_writer.add_scalar("metrics/val_f1", val_metrics["f1"], epoch)
         tb_writer.flush()
 
+        if train_outputs is not None:
+            _save_epoch_diagnostics(train_outputs["labels"], train_outputs["probs"], "train", epoch, config.output_dir)
+        if val_outputs is not None:
+            _save_epoch_diagnostics(val_outputs["labels"], val_outputs["probs"], "val", epoch, config.output_dir)
+        train_outputs = None
+        val_outputs = None
+
         model_state = model.state_dict()
         optimizer_state = optimizer.state_dict()
         scheduler_state = scheduler.state_dict()
@@ -732,8 +873,10 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
         _prune_checkpoints(config.output_dir, "vsdlm_epoch_", 10)
 
         current_val_loss = val_metrics["loss"] if val_metrics else train_metrics["loss"]
-        if current_val_loss < best_val_loss:
+        score_value = val_metrics["f1"] if val_metrics else train_metrics["f1"]
+        if score_value > best_f1:
             accuracy_value = _infer_accuracy(train_metrics, val_metrics)
+            best_f1 = score_value
             best_val_loss = current_val_loss
             best_state = {
                 "epoch": epoch,
@@ -745,26 +888,29 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
                 "val_metrics": copy.deepcopy(val_metrics) if val_metrics is not None else None,
                 "best_val_loss": current_val_loss,
                 "best_accuracy": accuracy_value,
+                "best_f1": score_value,
             }
             best_checkpoint = dict(epoch_payload)
             best_checkpoint.update(
                 best_val_loss=current_val_loss,
                 best_epoch=epoch,
                 best_accuracy=accuracy_value,
+                best_f1=score_value,
             )
-            best_checkpoint_path = config.output_dir / f"vsdlm_best_epoch{epoch:04d}_acc{accuracy_value:.4f}.pt"
+            best_checkpoint_path = config.output_dir / f"vsdlm_best_epoch{epoch:04d}_f1{score_value:.4f}.pt"
             best_state["checkpoint_path"] = str(best_checkpoint_path)
             torch.save(best_checkpoint, best_checkpoint_path)
             _prune_checkpoints(config.output_dir, "vsdlm_best_", 10)
-            LOGGER.info("New best model at epoch %d (loss %.4f).", epoch, current_val_loss)
+            LOGGER.info("New best model at epoch %d (F1 %.4f).", epoch, score_value)
 
     if best_state is None or best_checkpoint_path is None:
         raise RuntimeError("Training did not produce a valid model checkpoint.")
 
     model.load_state_dict(best_state["model_state"])
 
-    test_metrics = (
-        _run_epoch(
+    test_metrics = None
+    if test_loader:
+        test_metrics, _ = _run_epoch(
             model,
             test_loader,
             criterion,
@@ -774,9 +920,6 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
             autocast_enabled=amp_enabled,
             progress_desc="Test",
         )
-        if test_loader
-        else None
-    )
     LOGGER.info("Test metrics: %s", json.dumps(test_metrics, indent=2) if test_metrics else "n/a")
     if test_metrics:
         step = best_state["epoch"]
@@ -796,6 +939,7 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
         "checkpoint": str(best_checkpoint_path),
         "best_epoch": best_state["epoch"],
         "best_accuracy": best_state["best_accuracy"],
+        "best_f1": best_state["best_f1"],
         "best_val_loss": best_state["best_val_loss"],
         "val_metrics": best_state["val_metrics"],
         "train_metrics": best_state["train_metrics"],
