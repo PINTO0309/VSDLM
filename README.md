@@ -193,6 +193,8 @@ uv run python 07_demo_deimv2_onnx_wholebody34_with_edges.py \
 --crop_margin_bottom 6 \
 --crop_margin_left 2 \
 --crop_margin_right 2
+
+count=351473 | height mean=29.67px median=29.00px | width mean=48.00px median=48.00px
 ```
 
 ## Acknowledgements
