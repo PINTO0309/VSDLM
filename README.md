@@ -19,7 +19,7 @@ Visual-only speech detection driven by lip movements.
 ```bash
 # `--image_size` must be specified as a single integer (e.g. '48') or as 'HEIGHTxWIDTH' (e.g. '30x48').
 uv run python -m vsdlm train \
---data_root dataset/output \
+--data_root dataset/data \
 --output_dir runs/vsdlm \
 --epochs 30 \
 --batch_size 64 \
