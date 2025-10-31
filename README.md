@@ -5,7 +5,7 @@ There are countless situations where you can't hear the audio, and it's really f
 
 https://github.com/user-attachments/assets/c1813290-e7a6-4ce1-b44d-4dcfad6f8837
 
-|Variant||ONNX|
+|Variant|Size|ONNX|
 |:-:|:-|:-|
 |S|494 KB|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_s.onnx)|
 |M||[Download]()|
