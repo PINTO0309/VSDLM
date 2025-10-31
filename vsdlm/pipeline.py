@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+import cv2
 import numpy as np
 import pandas as pd
 import torch
@@ -86,6 +87,25 @@ else:
         if not enabled:
             return nullcontext()
         return _cuda_autocast(enabled=True)
+
+
+class RandomCLAHE:
+    def __init__(self, clip_limit: float = 2.0, tile_grid_size: tuple[int, int] = (8, 8), p: float = 0.01) -> None:
+        self.clip_limit = float(clip_limit)
+        self.tile_grid_size = tile_grid_size
+        self.p = float(p)
+
+    def __call__(self, img: Image.Image) -> Image.Image:
+        if torch.rand(1).item() >= self.p:
+            return img
+        np_img = np.array(img)
+        lab = cv2.cvtColor(np_img, cv2.COLOR_RGB2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=self.tile_grid_size)
+        l_channel = clahe.apply(l_channel)
+        lab = cv2.merge((l_channel, a_channel, b_channel))
+        rgb = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+        return Image.fromarray(rgb)
 
 
 class _BatchNormAffine(nn.Module):
@@ -277,7 +297,9 @@ def _build_transforms(image_size: int, mean: Sequence[float], std: Sequence[floa
     train_transform = transforms.Compose(
         [
             transforms.Resize((image_size, image_size)),
-            transforms_v2.RandomPhotometricDistort(),
+            transforms_v2.RandomPhotometricDistort(p=0.5),
+            RandomCLAHE(p=0.01, tile_grid_size=(4, 4)),
+            transforms.RandomGrayscale(p=0.01),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),
         ]
