@@ -22,7 +22,7 @@ uv run python -m vsdlm train \
 --data_root dataset/data \
 --output_dir runs/vsdlm \
 --epochs 30 \
---batch_size 64 \
+--batch_size 256 \
 --train_ratio 0.8 \
 --val_ratio 0.2 \
 --image_size 30x48 \
