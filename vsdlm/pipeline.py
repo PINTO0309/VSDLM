@@ -1019,6 +1019,93 @@ def predict_images(
     return pd.DataFrame(records)
 
 
+def run_webcam_inference(
+    checkpoint_path: Path,
+    camera_index: int = 0,
+    device_spec: str = "auto",
+    window_name: str = "VSDLM Webcam",
+    mirror: bool = False,
+) -> None:
+    device = _resolve_device(device_spec)
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    model_config = ModelConfig(**checkpoint["model_config"])
+    model = VSDLM(model_config).to(device)
+    model.load_state_dict(checkpoint["model_state"])
+    model.eval()
+
+    normalization = checkpoint["normalization"]
+    mean = normalization.get("mean", DEFAULT_MEAN)
+    std = normalization.get("std", DEFAULT_STD)
+    image_size_raw = normalization.get("image_size", (112, 112))
+    try:
+        image_size = _ensure_image_size_tuple(image_size_raw)
+    except ValueError:
+        LOGGER.warning("Invalid image_size %s in checkpoint; defaulting to 112x112.", image_size_raw)
+        image_size = (112, 112)
+    _, eval_transform = _build_transforms(image_size, mean, std)
+
+    cap = cv2.VideoCapture(camera_index)
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open camera index {camera_index}.")
+
+    LOGGER.info(
+        "Starting webcam inference using checkpoint %s on device %s (camera index %d).",
+        checkpoint_path,
+        device,
+        camera_index,
+    )
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    try:
+        with torch.no_grad():
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    LOGGER.warning("Failed to read frame from camera; stopping.")
+                    break
+
+                if mirror:
+                    frame = cv2.flip(frame, 1)
+
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(rgb_frame)
+                tensor = eval_transform(pil_image).unsqueeze(0).to(device)
+                logits = model(tensor)
+                prob_open = torch.sigmoid(logits)[0].item()
+
+                label = LABEL_MAP[int(prob_open >= 0.5)]
+                color = (0, 200, 0) if label == "open" else (50, 50, 255)
+                cv2.putText(
+                    frame,
+                    f"Prob open: {prob_open:.2%}",
+                    (12, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    frame,
+                    f"Prediction: {label}",
+                    (12, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
+
+                cv2.imshow(window_name, frame)
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    LOGGER.info("Exit requested (key press).")
+                    break
+    finally:
+        cap.release()
+        cv2.destroyWindow(window_name)
+
+
 def export_to_onnx(
     checkpoint_path: Path,
     output_path: Path,
@@ -1120,6 +1207,13 @@ def build_parser() -> argparse.ArgumentParser:
     predict_parser.add_argument("--output", type=Path, help="Optional CSV path to save predictions.")
     predict_parser.add_argument("--device", type=str, default="auto")
 
+    webcam_parser = subparsers.add_parser("webcam", help="Run real-time inference from a webcam.")
+    webcam_parser.add_argument("--checkpoint", type=Path, required=True)
+    webcam_parser.add_argument("--camera_index", type=int, default=0, help="OpenCV camera index (default: 0).")
+    webcam_parser.add_argument("--device", type=str, default="auto")
+    webcam_parser.add_argument("--window_name", type=str, default="VSDLM Webcam")
+    webcam_parser.add_argument("--mirror", action="store_true", help="Mirror frames horizontally before display.")
+
     onnx_parser = subparsers.add_parser("exportonnx", help="Export a trained checkpoint to ONNX.")
     onnx_parser.add_argument("--checkpoint", type=Path, required=True)
     onnx_parser.add_argument("--output", type=Path, required=True)
@@ -1162,6 +1256,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             print(f"Saved predictions to {args.output}")
         else:
             print(df.to_string(index=False))
+    elif args.command == "webcam":
+        run_webcam_inference(
+            args.checkpoint,
+            camera_index=args.camera_index,
+            device_spec=args.device,
+            window_name=args.window_name,
+            mirror=args.mirror,
+        )
     elif args.command == "exportonnx":
         export_to_onnx(args.checkpoint, args.output, opset=args.opset, device_spec=args.device)
     else:

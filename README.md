@@ -53,7 +53,20 @@ uv run python -m vsdlm predict \
 - `--inputs` accepts files and/or directories (recursively scanned).
 - The resulting CSV contains raw logits and sigmoid probabilities (`prob_open`).
 
-### 3. ONNX Export
+### 3. Webcam Demo
+
+```bash
+uv run python -m vsdlm webcam \
+--checkpoint runs/vsdlm/vsdlm_best_epoch0004_f10.9321.pt \
+--camera_index 0 \
+--mirror
+```
+
+- Press `q` or `Esc` to stop the session.
+- The live overlay shows the open-mouth probability and predicted label in real time.
+- Use `--device cuda` to force GPU inference and `--window_name` to customise the OpenCV window title.
+
+### 4. ONNX Export
 
 ```bash
 uv run python -m vsdlm exportonnx \
