@@ -10,7 +10,7 @@ import sys
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -227,7 +227,7 @@ class TrainConfig:
     lr: float = 1e-4
     weight_decay: float = 1e-4
     num_workers: int = 4
-    image_size: int = 112
+    image_size: tuple[int, int] = (112, 112)
     train_ratio: float = 0.8
     val_ratio: float = 0.2
     test_ratio: float = 0.0
@@ -243,9 +243,60 @@ class TrainConfig:
         data = asdict(self)
         data["data_root"] = str(self.data_root)
         data["output_dir"] = str(self.output_dir)
+        data["image_size"] = list(self.image_size)
         if self.resume_from is not None:
             data["resume_from"] = str(self.resume_from)
         return data
+
+
+def _ensure_image_size_tuple(value: Any) -> tuple[int, int]:
+    if isinstance(value, int):
+        if value <= 0:
+            raise ValueError("Image dimensions must be positive integers.")
+        return value, value
+    if isinstance(value, tuple):
+        if len(value) != 2:
+            raise ValueError(f"Expected tuple of length 2 for image size, got {value!r}.")
+        height, width = value
+    elif isinstance(value, list):
+        if len(value) != 2:
+            raise ValueError(f"Expected list of length 2 for image size, got {value!r}.")
+        height, width = value
+    else:
+        raise ValueError(f"Unsupported image size specification: {value!r}.")
+
+    height = int(height)
+    width = int(width)
+    if height <= 0 or width <= 0:
+        raise ValueError("Image dimensions must be positive integers.")
+    return height, width
+
+
+def _parse_image_size_arg(raw: Any) -> tuple[int, int]:
+    if isinstance(raw, (tuple, list, int)):
+        try:
+            return _ensure_image_size_tuple(raw)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+
+    if not isinstance(raw, str):
+        raise argparse.ArgumentTypeError(f"Unsupported image size value: {raw!r}")
+
+    text = raw.strip().lower().replace("×", "x").replace(",", "x")
+    parts = [part for part in text.split("x") if part]
+    try:
+        if len(parts) == 1:
+            size = int(parts[0])
+            return _ensure_image_size_tuple(size)
+        if len(parts) == 2:
+            height, width = (int(part) for part in parts)
+            return _ensure_image_size_tuple((height, width))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+    raise argparse.ArgumentTypeError(
+        "Image size must be specified as a single integer (e.g. '48') or as 'HEIGHTxWIDTH' (e.g. '64x48')."
+    )
 
 
 def _resolve_device(device_spec: str) -> torch.device:
@@ -293,10 +344,11 @@ def _set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def _build_transforms(image_size: int, mean: Sequence[float], std: Sequence[float]):
+def _build_transforms(image_size: Any, mean: Sequence[float], std: Sequence[float]):
+    height, width = _ensure_image_size_tuple(image_size)
     train_transform = transforms.Compose(
         [
-            transforms.Resize((image_size, image_size)),
+            transforms.Resize((height, width)),
             transforms_v2.RandomPhotometricDistort(p=0.5),
             RandomCLAHE(p=0.01, tile_grid_size=(4, 4)),
             transforms.RandomGrayscale(p=0.01),
@@ -306,7 +358,7 @@ def _build_transforms(image_size: int, mean: Sequence[float], std: Sequence[floa
     )
     eval_transform = transforms.Compose(
         [
-            transforms.Resize((image_size, image_size)),
+            transforms.Resize((height, width)),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),
         ]
@@ -472,7 +524,7 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
 
     mean, std = DEFAULT_MEAN, DEFAULT_STD
     train_transform, eval_transform = _build_transforms(config.image_size, mean, std)
-    normalization = {"mean": list(mean), "std": list(std), "image_size": config.image_size}
+    normalization = {"mean": list(mean), "std": list(std), "image_size": list(config.image_size)}
 
     train_dataset = VSDLMDataset(splits["train"], transform=train_transform)
     val_dataset = VSDLMDataset(splits["val"], transform=eval_transform) if splits["val"] else None
@@ -536,12 +588,25 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
         LOGGER.info("Resuming from checkpoint %s (epoch %d).", resume_path, resume_epoch)
 
         checkpoint_norm = resume_payload.get("normalization")
-        if checkpoint_norm and checkpoint_norm != normalization:
-            LOGGER.warning(
-                "Checkpoint normalization %s differs from current settings %s.",
-                checkpoint_norm,
-                normalization,
+        if checkpoint_norm:
+            current_size = _ensure_image_size_tuple(normalization["image_size"])
+            try:
+                checkpoint_size = _ensure_image_size_tuple(checkpoint_norm.get("image_size", current_size))
+            except ValueError:
+                checkpoint_size = current_size
+            checkpoint_mean = list(checkpoint_norm.get("mean", normalization["mean"]))
+            checkpoint_std = list(checkpoint_norm.get("std", normalization["std"]))
+            norm_mismatch = (
+                checkpoint_mean != normalization["mean"]
+                or checkpoint_std != normalization["std"]
+                or checkpoint_size != current_size
             )
+            if norm_mismatch:
+                LOGGER.warning(
+                    "Checkpoint normalization %s differs from current settings %s.",
+                    checkpoint_norm,
+                    normalization,
+                )
 
         model.load_state_dict(resume_payload["model_state"])
         if resume_payload.get("optimizer_state"):
@@ -782,7 +847,12 @@ def predict_images(
     normalization = checkpoint["normalization"]
     mean = normalization.get("mean", DEFAULT_MEAN)
     std = normalization.get("std", DEFAULT_STD)
-    image_size = normalization.get("image_size", 112)
+    image_size_raw = normalization.get("image_size", (112, 112))
+    try:
+        image_size = _ensure_image_size_tuple(image_size_raw)
+    except ValueError:
+        LOGGER.warning("Invalid image_size %s in checkpoint; defaulting to 112x112.", image_size_raw)
+        image_size = (112, 112)
     _, eval_transform = _build_transforms(image_size, mean, std)
 
     image_paths = _gather_image_paths(inputs)
@@ -820,9 +890,14 @@ def export_to_onnx(
     model.eval()
 
     normalization = checkpoint["normalization"]
-    image_size = normalization.get("image_size", 112)
+    image_size_raw = normalization.get("image_size", (112, 112))
+    try:
+        image_size = _ensure_image_size_tuple(image_size_raw)
+    except ValueError:
+        LOGGER.warning("Invalid image_size %s in checkpoint; defaulting to 112x112.", image_size_raw)
+        image_size = (112, 112)
 
-    dummy = torch.randn(1, 3, image_size, image_size, device=device)
+    dummy = torch.randn(1, 3, image_size[0], image_size[1], device=device)
 
     class _ONNXProbWrapper(nn.Module):
         def __init__(self, base_model: nn.Module) -> None:
@@ -877,7 +952,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--lr", type=float, default=1e-4)
     train_parser.add_argument("--weight_decay", type=float, default=1e-4)
     train_parser.add_argument("--num_workers", type=int, default=4)
-    train_parser.add_argument("--image_size", type=int, default=48)
+    train_parser.add_argument(
+        "--image_size",
+        type=_parse_image_size_arg,
+        default=_parse_image_size_arg("48"),
+        help="Square size (e.g. 48) or HEIGHTxWIDTH (e.g. 64x48) for resizing input images.",
+    )
     train_parser.add_argument("--train_ratio", type=float, default=0.8)
     train_parser.add_argument("--val_ratio", type=float, default=0.2)
     train_parser.add_argument("--test_ratio", type=float, default=0.0)

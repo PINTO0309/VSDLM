@@ -17,6 +17,7 @@ Visual-only speech detection driven by lip movements.
 ### 1. Training
 
 ```bash
+# `--image_size` must be specified as a single integer (e.g. '48') or as 'HEIGHTxWIDTH' (e.g. '30x48').
 uv run python -m vsdlm train \
 --data_root dataset/output \
 --output_dir runs/vsdlm \
@@ -24,7 +25,7 @@ uv run python -m vsdlm train \
 --batch_size 64 \
 --train_ratio 0.8 \
 --val_ratio 0.2 \
---image_size 48 \
+--image_size 30x48 \
 --base_channels 32 \
 --num_blocks 4 \
 --seed 42 \
@@ -33,6 +34,7 @@ uv run python -m vsdlm train \
 ```
 
 - Outputs include the latest 10 `vsdlm_epoch_*.pt`, the latest 10 `vsdlm_best_epochXXXX_accYYYY.pt`, `history.json`, `summary.json`, optional `test_predictions.csv`, and `train.log`.
+- `--image_size` accepts either a single integer for square crops (e.g. `--image_size 48`) or `HEIGHTxWIDTH` to resize non-square frames (e.g. `--image_size 64x48`).
 - Add `--resume <checkpoint>` to continue from an earlier epoch. Remember that `--epochs` indicates the desired total epoch count (e.g. resuming `--epochs 40` after training to epoch 30 will run 10 additional epochs).
 - Launch TensorBoard with:
   ```bash
