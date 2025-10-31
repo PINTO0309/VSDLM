@@ -355,6 +355,11 @@ def crop_box_with_margin(
     if x2 <= x1 or y2 <= y1:
         return None
 
+    crop_width = x2 - x1 + 1
+    crop_height = y2 - y1 + 1
+    if crop_width < 10 or crop_height < 10:
+        return None
+
     return image[y1 : y2 + 1, x1 : x2 + 1].copy()
 
 class AbstractModel(ABC):
