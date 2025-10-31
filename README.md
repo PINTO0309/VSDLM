@@ -124,6 +124,8 @@ uv run python -m vsdlm exportonnx \
 --checkpoint runs/vsdlm/vsdlm_best_epoch0004_f10.9321.pt \
 --output runs/vsdlm/vsdlm.onnx \
 --opset 17
+
+uv run python -m vsdlm webcam_onnx --model vsdlm.onnx --camera_index 0 --provider cuda --detector_provider tensorrt
 ```
 
 - The saved graph exposes `images` as input and `prob_open` as output (batch dimension is dynamic); probabilities can be consumed directly.
