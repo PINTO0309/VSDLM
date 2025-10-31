@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib.util
 import inspect
 import json
 import logging
@@ -11,6 +12,7 @@ import sys
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
@@ -40,6 +42,78 @@ from .model import VSDLM, ModelConfig
 LOGGER = logging.getLogger("vsdlm")
 
 LABEL_MAP = {0: "closed", 1: "open"}
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DEIM_MODULE_PATH = _REPO_ROOT / "dataset" / "07_demo_deimv2_onnx_wholebody34_with_edges.py"
+_DEFAULT_DETECTOR_MODEL = _REPO_ROOT / "dataset" / "deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx"
+_DEIM_MODULE: Optional[ModuleType] = None
+
+
+def _load_deim_module() -> ModuleType:
+    global _DEIM_MODULE
+    if _DEIM_MODULE is not None:
+        return _DEIM_MODULE
+    if not _DEIM_MODULE_PATH.exists():
+        raise FileNotFoundError(
+            f"DEIMv2 demo module not found at {_DEIM_MODULE_PATH}. Please ensure the script is available."
+        )
+    spec = importlib.util.spec_from_file_location("vsdlm._deimv2_detector", _DEIM_MODULE_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load DEIMv2 demo module from {_DEIM_MODULE_PATH}.")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    _DEIM_MODULE = module
+    return module
+
+
+def _create_mouth_detector(model_path: Path, providers: Sequence[Any]):
+    module = _load_deim_module()
+    if not model_path.exists():
+        raise FileNotFoundError(f"Detector model not found: {model_path}")
+    provider_list = list(providers) if providers else ["CPUExecutionProvider"]
+    try:
+        detector = module.DEIMv2(
+            runtime="onnx",
+            model_path=str(model_path),
+            providers=provider_list,
+        )
+    except Exception as exc:  # pragma: no cover - defensive for runtime issues
+        raise RuntimeError(f"Failed to initialize DEIMv2 mouth detector: {exc}") from exc
+    return detector
+
+
+def _resolve_onnx_providers(provider: str) -> List[Any]:
+    key = (provider or "cpu").lower()
+    if key == "cuda":
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    if key == "tensorrt":
+        return ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+def _extract_mouth_crop(
+    frame: np.ndarray,
+    box: Any,
+    *,
+    margin_top: int,
+    margin_bottom: int,
+    margin_left: int,
+    margin_right: int,
+) -> Tuple[Optional[np.ndarray], Optional[Tuple[int, int, int, int]]]:
+    if frame is None or frame.size == 0 or box is None:
+        return None, None
+    h, w = frame.shape[:2]
+    x1 = max(int(box.x1) - margin_left, 0)
+    y1 = max(int(box.y1) - margin_top, 0)
+    x2 = min(int(box.x2) + margin_right, w - 1)
+    y2 = min(int(box.y2) + margin_bottom, h - 1)
+    if x2 <= x1 or y2 <= y1:
+        return None, None
+    crop = frame[y1 : y2 + 1, x1 : x2 + 1]
+    if crop.size == 0:
+        return None, None
+    return crop.copy(), (x1, y1, x2, y2)
 
 
 if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
@@ -1076,6 +1150,8 @@ def run_webcam_inference(
     device_spec: str = "auto",
     window_name: str = "VSDLM Webcam",
     mirror: bool = False,
+    detector_model: Optional[Path] = None,
+    detector_provider: str = "cpu",
 ) -> None:
     device = _resolve_device(device_spec)
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -1096,6 +1172,16 @@ def run_webcam_inference(
         image_size = (112, 112)
     _, eval_transform = _build_transforms(image_size, mean, std)
 
+    detector_path = Path(detector_model) if detector_model is not None else _DEFAULT_DETECTOR_MODEL
+    if not detector_path.exists():
+        raise FileNotFoundError(
+            f"Mouth detector model not found at {detector_path}. "
+            "Provide --detector_model pointing to a valid DEIMv2 ONNX file."
+        )
+    detector_providers = _resolve_onnx_providers(detector_provider)
+    mouth_detector = _create_mouth_detector(detector_path, detector_providers)
+    LOGGER.info("Loaded DEIMv2 mouth detector from %s using providers %s.", detector_path, detector_providers)
+
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         raise RuntimeError(f"Failed to open camera index {camera_index}.")
@@ -1107,6 +1193,12 @@ def run_webcam_inference(
         camera_index,
     )
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+    margin_top = 2
+    margin_bottom = 6
+    margin_left = 2
+    margin_right = 2
+
     try:
         with torch.no_grad():
             while True:
@@ -1118,9 +1210,50 @@ def run_webcam_inference(
                 if mirror:
                     frame = cv2.flip(frame, 1)
 
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_image = Image.fromarray(rgb_frame)
-                tensor = eval_transform(pil_image).unsqueeze(0).to(device)
+                try:
+                    boxes = mouth_detector(
+                        image=frame,
+                        disable_generation_identification_mode=True,
+                        disable_gender_identification_mode=True,
+                        disable_left_and_right_hand_identification_mode=True,
+                        disable_headpose_identification_mode=True,
+                    )
+                except Exception as exc:  # pragma: no cover - runtime safeguard
+                    LOGGER.error("Mouth detector inference failed: %s", exc)
+                    break
+
+                mouth_boxes = [box for box in boxes if getattr(box, "classid", None) == 19]
+                best_box = max(mouth_boxes, key=lambda box: box.score) if mouth_boxes else None
+                crop, crop_coords = _extract_mouth_crop(
+                    frame,
+                    best_box,
+                    margin_top=margin_top,
+                    margin_bottom=margin_bottom,
+                    margin_left=margin_left,
+                    margin_right=margin_right,
+                )
+
+                if crop is None:
+                    cv2.putText(
+                        frame,
+                        "Mouth not detected",
+                        (12, 28),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (0, 0, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+                    cv2.imshow(window_name, frame)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key in (ord("q"), 27):
+                        LOGGER.info("Exit requested (key press).")
+                        break
+                    continue
+
+                rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                pil_crop = Image.fromarray(rgb_crop)
+                tensor = eval_transform(pil_crop).unsqueeze(0).to(device)
                 logits = model(tensor)
                 prob_open = torch.sigmoid(logits)[0].item()
 
@@ -1147,11 +1280,191 @@ def run_webcam_inference(
                     cv2.LINE_AA,
                 )
 
+                if crop_coords is not None:
+                    x1, y1, x2, y2 = crop_coords
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
                 cv2.imshow(window_name, frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):
                     LOGGER.info("Exit requested (key press).")
                     break
+    finally:
+        cap.release()
+        cv2.destroyWindow(window_name)
+
+
+def run_webcam_inference_onnx(
+    onnx_model: Path,
+    camera_index: int = 0,
+    window_name: str = "VSDLM Webcam (ONNX)",
+    mirror: bool = False,
+    model_provider: str = "cpu",
+    detector_model: Optional[Path] = None,
+    detector_provider: str = "cpu",
+    image_size: Optional[tuple[int, int]] = None,
+) -> None:
+    try:
+        import onnxruntime as ort  # type: ignore
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise RuntimeError("onnxruntime is required for ONNX inference. Install with `pip install onnxruntime`.") from exc
+
+    ort.set_default_logger_severity(3)
+    session_options = ort.SessionOptions()
+    session_options.log_severity_level = 3
+
+    providers = _resolve_onnx_providers(model_provider)
+    session = ort.InferenceSession(
+        str(onnx_model),
+        sess_options=session_options,
+        providers=providers,
+    )
+    input_name = session.get_inputs()[0].name
+    output_name = session.get_outputs()[0].name
+
+    input_shape = session.get_inputs()[0].shape
+    if image_size is not None:
+        height, width = _ensure_image_size_tuple(image_size)
+        if len(input_shape) >= 4:
+            expected_h, expected_w = input_shape[2], input_shape[3]
+            if isinstance(expected_h, int) and isinstance(expected_w, int):
+                if (expected_h, expected_w) != (height, width):
+                    raise ValueError(
+                        f"Specified image_size {(height, width)} does not match ONNX input {(expected_h, expected_w)}."
+                    )
+    else:
+        if len(input_shape) >= 4 and isinstance(input_shape[2], int) and isinstance(input_shape[3], int):
+            height = int(input_shape[2])
+            width = int(input_shape[3])
+        else:
+            LOGGER.warning(
+                "ONNX model has dynamic spatial dimensions; defaulting to 112x112. "
+                "Override with --image_size HEIGHTxWIDTH if needed."
+            )
+            height, width = (112, 112)
+    _, eval_transform = _build_transforms((height, width), DEFAULT_MEAN, DEFAULT_STD)
+
+    detector_path = Path(detector_model) if detector_model is not None else _DEFAULT_DETECTOR_MODEL
+    if not detector_path.exists():
+        raise FileNotFoundError(
+            f"Mouth detector model not found at {detector_path}. "
+            "Provide --detector_model pointing to a valid DEIMv2 ONNX file."
+        )
+    detector_providers = _resolve_onnx_providers(detector_provider)
+    mouth_detector = _create_mouth_detector(detector_path, detector_providers)
+    LOGGER.info(
+        "Loaded ONNX model %s with providers %s (detector providers %s).",
+        onnx_model,
+        providers,
+        detector_providers,
+    )
+
+    cap = cv2.VideoCapture(camera_index)
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open camera index {camera_index}.")
+
+    LOGGER.info(
+        "Starting ONNX webcam inference using %s (camera index %d).",
+        onnx_model,
+        camera_index,
+    )
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+    margin_top = 5 #2
+    margin_bottom = 5 #6
+    margin_left = 5 #2
+    margin_right = 5 #2
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                LOGGER.warning("Failed to read frame from camera; stopping.")
+                break
+
+            if mirror:
+                frame = cv2.flip(frame, 1)
+
+            try:
+                boxes = mouth_detector(
+                    image=frame,
+                    disable_generation_identification_mode=True,
+                    disable_gender_identification_mode=True,
+                    disable_left_and_right_hand_identification_mode=True,
+                    disable_headpose_identification_mode=True,
+                )
+            except Exception as exc:  # pragma: no cover - runtime safeguard
+                LOGGER.error("Mouth detector inference failed: %s", exc)
+                break
+
+            mouth_boxes = [box for box in boxes if getattr(box, "classid", None) == 19]
+            best_box = max(mouth_boxes, key=lambda box: box.score) if mouth_boxes else None
+            crop, crop_coords = _extract_mouth_crop(
+                frame,
+                best_box,
+                margin_top=margin_top,
+                margin_bottom=margin_bottom,
+                margin_left=margin_left,
+                margin_right=margin_right,
+            )
+
+            if crop is None:
+                cv2.putText(
+                    frame,
+                    "Mouth not detected",
+                    (12, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 0, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.imshow(window_name, frame)
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    LOGGER.info("Exit requested (key press).")
+                    break
+                continue
+
+            rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            pil_crop = Image.fromarray(rgb_crop)
+            tensor = eval_transform(pil_crop).unsqueeze(0)
+            inputs = {input_name: tensor.cpu().numpy()}
+            outputs = session.run([output_name], inputs)
+            prob_open = float(outputs[0].flatten()[0])
+
+            label = LABEL_MAP[int(prob_open >= 0.5)]
+            color = (0, 200, 0) if label == "open" else (50, 50, 255)
+            cv2.putText(
+                frame,
+                f"Prob open: {prob_open:.2%}",
+                (12, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame,
+                f"Prediction: {label}",
+                (12, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+
+            if crop_coords is not None:
+                x1, y1, x2, y2 = crop_coords
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+            cv2.imshow(window_name, frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):
+                LOGGER.info("Exit requested (key press).")
+                break
     finally:
         cap.release()
         cv2.destroyWindow(window_name)
@@ -1290,6 +1603,49 @@ def build_parser() -> argparse.ArgumentParser:
     webcam_parser.add_argument("--device", type=str, default="auto")
     webcam_parser.add_argument("--window_name", type=str, default="VSDLM Webcam")
     webcam_parser.add_argument("--mirror", action="store_true", help="Mirror frames horizontally before display.")
+    webcam_parser.add_argument(
+        "--detector_model",
+        type=Path,
+        help="Optional path to the DEIMv2 ONNX model for mouth detection. Defaults to the bundled dataset weight.",
+    )
+    webcam_parser.add_argument(
+        "--detector_provider",
+        type=str,
+        default="cpu",
+        choices=["cpu", "cuda", "tensorrt"],
+        help="ONNX Runtime execution provider for the mouth detector (default: cpu).",
+    )
+
+    webcam_onnx_parser = subparsers.add_parser("webcam_onnx", help="Run real-time inference from a webcam using an ONNX model.")
+    webcam_onnx_parser.add_argument("--model", type=Path, required=True, help="Path to the exported VSDLM ONNX model.")
+    webcam_onnx_parser.add_argument("--camera_index", type=int, default=0, help="OpenCV camera index (default: 0).")
+    webcam_onnx_parser.add_argument("--window_name", type=str, default="VSDLM Webcam (ONNX)")
+    webcam_onnx_parser.add_argument("--mirror", action="store_true", help="Mirror frames horizontally before display.")
+    webcam_onnx_parser.add_argument(
+        "--provider",
+        type=str,
+        default="cpu",
+        choices=["cpu", "cuda", "tensorrt"],
+        help="ONNX Runtime execution provider for the classifier (default: cpu).",
+    )
+    webcam_onnx_parser.add_argument(
+        "--detector_model",
+        type=Path,
+        help="Optional path to the DEIMv2 ONNX model for mouth detection. Defaults to the bundled dataset weight.",
+    )
+    webcam_onnx_parser.add_argument(
+        "--detector_provider",
+        type=str,
+        default="cpu",
+        choices=["cpu", "cuda", "tensorrt"],
+        help="ONNX Runtime execution provider for the mouth detector (default: cpu).",
+    )
+    webcam_onnx_parser.add_argument(
+        "--image_size",
+        type=str,
+        default=None,
+        help="Override classifier input size as HEIGHTxWIDTH (defaults to ONNX model shape).",
+    )
 
     onnx_parser = subparsers.add_parser("exportonnx", help="Export a trained checkpoint to ONNX.")
     onnx_parser.add_argument("--checkpoint", type=Path, required=True)
@@ -1344,6 +1700,20 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             device_spec=args.device,
             window_name=args.window_name,
             mirror=args.mirror,
+            detector_model=args.detector_model,
+            detector_provider=args.detector_provider,
+        )
+    elif args.command == "webcam_onnx":
+        parsed_size = _parse_image_size_arg(args.image_size) if args.image_size else None
+        run_webcam_inference_onnx(
+            args.model,
+            camera_index=args.camera_index,
+            window_name=args.window_name,
+            mirror=args.mirror,
+            model_provider=args.provider,
+            detector_model=args.detector_model,
+            detector_provider=args.detector_provider,
+            image_size=parsed_size,
         )
     elif args.command == "exportonnx":
         export_to_onnx(args.checkpoint, args.output, opset=args.opset, device_spec=args.device)
