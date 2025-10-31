@@ -833,14 +833,25 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
         }
         history.append(record)
 
-        LOGGER.info(
-            "Epoch %d | train loss %.4f f1 %.3f | val loss %s f1 %s",
-            epoch,
-            train_metrics["loss"],
-            train_metrics["f1"],
-            f"{record['val']['loss']:.4f}" if val_metrics else "n/a",
-            f"{record['val']['f1']:.3f}" if val_metrics else "n/a",
+        train_summary = (
+            f"loss {train_metrics['loss']:.4f} "
+            f"acc {train_metrics['accuracy']:.4f} "
+            f"prec {train_metrics['precision']:.4f} "
+            f"rec {train_metrics['recall']:.4f} "
+            f"f1 {train_metrics['f1']:.4f}"
         )
+        if val_metrics:
+            val_summary = (
+                f"loss {val_metrics['loss']:.4f} "
+                f"acc {val_metrics['accuracy']:.4f} "
+                f"prec {val_metrics['precision']:.4f} "
+                f"rec {val_metrics['recall']:.4f} "
+                f"f1 {val_metrics['f1']:.4f}"
+            )
+        else:
+            val_summary = "loss n/a acc n/a prec n/a rec n/a f1 n/a"
+
+        LOGGER.info("Epoch %d | train %s | val %s", epoch, train_summary, val_summary)
 
         tb_writer.add_scalar("loss/train", train_metrics["loss"], epoch)
         tb_writer.add_scalar("metrics/train_accuracy", train_metrics["accuracy"], epoch)
