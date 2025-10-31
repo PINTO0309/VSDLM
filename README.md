@@ -7,11 +7,11 @@ There are countless situations where you can't hear the audio, and it's really f
 
 https://github.com/user-attachments/assets/c1813290-e7a6-4ce1-b44d-4dcfad6f8837
 
-|Variant|Size|ONNX|
-|:-:|:-:|:-:|
-|S|494 KB|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_s.onnx)|
-|M|1.7 MB|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_m.onnx)|
-|L|6.4 MB|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_l.onnx)|
+|Variant|Size|F1|ONNX|
+|:-:|:-:|:-:|:-:|
+|S|494 KB|0.9696|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_s.onnx)|
+|M|1.7 MB|0.9801|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_m.onnx)|
+|L|6.4 MB|0.9891|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_l.onnx)|
 
 ## Training Pipeline
 
