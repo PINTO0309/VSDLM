@@ -320,7 +320,7 @@ class TrainConfig:
     batch_size: int = 32
     lr: float = 1e-4
     weight_decay: float = 1e-4
-    num_workers: int = 4
+    num_workers: int = 8
     image_size: tuple[int, int] = (112, 112)
     train_ratio: float = 0.8
     val_ratio: float = 0.2
@@ -478,9 +478,11 @@ def _build_transforms(image_size: Any, mean: Sequence[float], std: Sequence[floa
     train_transform = transforms.Compose(
         [
             transforms.Resize((height, width)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            # transforms.RandomRotation(degrees=(-20, 20)),
             transforms_v2.RandomPhotometricDistort(p=0.5),
             RandomCLAHE(p=0.01, tile_grid_size=(4, 4)),
-            transforms.RandomGrayscale(p=0.01),
+            # transforms.RandomGrayscale(p=0.01),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),
         ]
@@ -771,15 +773,19 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
     val_dataset = VSDLMDataset(splits["val"], transform=eval_transform) if splits["val"] else None
     test_dataset = VSDLMDataset(splits["test"], transform=eval_transform) if splits["test"] else None
 
-    train_sampler = build_weighted_sampler(splits["train"])
+    # train_sampler = build_weighted_sampler(splits["train"])
     train_loader = create_dataloader(
         train_dataset,
         batch_size=config.batch_size,
-        sampler=train_sampler,
+        shuffle=True,
+        sampler=None,
         num_workers=config.num_workers,
     )
     val_loader = (
-        create_dataloader(val_dataset, batch_size=config.batch_size, num_workers=config.num_workers)
+        create_dataloader(
+            val_dataset, batch_size=config.batch_size,
+            num_workers=config.num_workers,
+        )
         if val_dataset is not None and len(val_dataset) > 0
         else None
     )
