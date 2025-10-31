@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import math
+import re
 import sys
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
@@ -238,6 +239,8 @@ class TrainConfig:
     dropout: float = 0.3
     arch_variant: str = "baseline"
     head_variant: str = "auto"
+    token_mixer_grid: tuple[int, int] = (2, 3)
+    token_mixer_layers: int = 2
     device: str = "auto"
     resume_from: Optional[Path] = None
     use_amp: bool = False
@@ -247,6 +250,7 @@ class TrainConfig:
         data["data_root"] = str(self.data_root)
         data["output_dir"] = str(self.output_dir)
         data["image_size"] = list(self.image_size)
+        data["token_mixer_grid"] = list(self.token_mixer_grid)
         if self.resume_from is not None:
             data["resume_from"] = str(self.resume_from)
         return data
@@ -300,6 +304,36 @@ def _parse_image_size_arg(raw: Any) -> tuple[int, int]:
     raise argparse.ArgumentTypeError(
         "Image size must be specified as a single integer (e.g. '48') or as 'HEIGHTxWIDTH' (e.g. '64x48')."
     )
+
+
+def _parse_token_mixer_grid_arg(raw: Any) -> tuple[int, int]:
+    if isinstance(raw, (tuple, list)):
+        values = list(raw)
+    elif isinstance(raw, str):
+        text = raw.strip().lower().replace("×", "x")
+        normalized = re.sub(r"[,\s]+", "x", text)
+        parts = [part for part in normalized.split("x") if part]
+        if len(parts) != 2:
+            raise argparse.ArgumentTypeError(
+                "Token mixer grid must be provided as 'HEIGHTxWIDTH', e.g. '2x3'."
+            )
+        values = parts
+    else:
+        raise argparse.ArgumentTypeError(f"Unsupported token mixer grid value: {raw!r}")
+
+    if len(values) != 2:
+        raise argparse.ArgumentTypeError(
+            "Token mixer grid must contain exactly two positive integers, e.g. '2x3'."
+        )
+
+    try:
+        height, width = (int(values[0]), int(values[1]))
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("Token mixer grid values must be integers.") from exc
+
+    if height <= 0 or width <= 0:
+        raise argparse.ArgumentTypeError("Token mixer grid values must be positive integers.")
+    return height, width
 
 
 def _resolve_device(device_spec: str) -> torch.device:
@@ -669,6 +703,8 @@ def train_pipeline(config: TrainConfig, verbose: bool = False) -> Dict[str, Any]
         dropout=config.dropout,
         arch_variant=config.arch_variant,
         head_variant=config.head_variant,
+        token_mixer_grid=config.token_mixer_grid,
+        token_mixer_layers=config.token_mixer_layers,
     )
     model = VSDLM(model_config).to(device)
     base_metadata = {
@@ -1225,6 +1261,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["auto", "avg", "avgmax_mlp", "transformer", "mlp_mixer"],
         help="Classification head configuration.",
     )
+    train_parser.add_argument(
+        "--token_mixer_grid",
+        type=_parse_token_mixer_grid_arg,
+        default=(2, 3),
+        help="Grid for token mixer heads specified as HEIGHTxWIDTH (e.g. '2x3').",
+    )
+    train_parser.add_argument(
+        "--token_mixer_layers",
+        type=int,
+        default=2,
+        help="Number of transformer or MLP-mixer layers when using those head variants.",
+    )
     train_parser.add_argument("--device", type=str, default="auto")
     train_parser.add_argument("--resume", type=Path, help="Resume training from a checkpoint file.")
     train_parser.add_argument("--use_amp", action="store_true", help="Enable mixed precision training (CUDA only).")
@@ -1275,6 +1323,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             dropout=args.dropout,
             arch_variant=args.arch_variant,
             head_variant=args.head_variant,
+            token_mixer_grid=args.token_mixer_grid,
+            token_mixer_layers=args.token_mixer_layers,
             device=args.device,
             resume_from=args.resume,
             use_amp=args.use_amp,
