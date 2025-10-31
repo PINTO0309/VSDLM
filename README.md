@@ -11,11 +11,11 @@ Visual-only speech detection driven by lip movements.
 - Per-epoch checkpoints named like `vsdlm_epoch_0001.pt` are retained (latest 10), as well as the best checkpoints named `vsdlm_best_epoch0004_f10.9321.pt` (also latest 10).
 - The backbone can be switched with `--arch_variant`. Supported combinations with `--head_variant` are:
 
-  | `--arch_variant` | 既定 (`--head_variant auto`) | 明示的に選択可能なヘッド | 備考 |
+  | `--arch_variant` | Default (`--head_variant auto`) | Explicitly selectable heads | Remarks |
   |------------------|-----------------------------|---------------------------|------|
-  | `baseline`       | `avg`                       | `avg`, `avgmax_mlp`       | `transformer`/`mlp_mixer` を使う場合は `--token_mixer_grid` が特徴マップサイズを割り切る値になるよう調整が必要（そのままだと ONNX 変換エラー）。 |
-  | `inverted_se`    | `avgmax_mlp`                | `avg`, `avgmax_mlp`       | `transformer`/`mlp_mixer` を使う場合は上記と同じ制約あり。 |
-  | `convnext`       | `transformer`               | `avg`, `avgmax_mlp`, `transformer`, `mlp_mixer` | グリッド調整なしで ONNX 出力に対応。 |
+  | `baseline`       | `avg`                       | `avg`, `avgmax_mlp`       | When using `transformer`/`mlp_mixer`, you need to adjust the height and width of the feature map so that they are divisible by `--token_mixer_grid` (if left as is, an exception will occur during ONNX conversion or inference). |
+  | `inverted_se`    | `avgmax_mlp`                | `avg`, `avgmax_mlp`       | When using `transformer`/`mlp_mixer`, it is necessary to adjust `--token_mixer_grid` as above. |
+  | `convnext`       | `transformer`               | `avg`, `avgmax_mlp`, `transformer`, `mlp_mixer` | For both heads, the grid must be divisible by the feature map (default `3x2` fits with 30x48 input). |
 - The classification head is selected with `--head_variant` (`avg`, `avgmax_mlp`, `transformer`, `mlp_mixer`, or `auto` which derives a sensible default from the backbone).
 - Mixed precision can be enabled with `--use_amp` when CUDA is available.
 - Resume training with `--resume path/to/vsdlm_epoch_XXXX.pt`; all optimiser/scheduler/AMP states and history are restored.
@@ -56,7 +56,7 @@ uv run python -m vsdlm train \
 --base_channels 32 \
 --num_blocks 4 \
 --arch_variant inverted_se \
---head_variant auto \
+--head_variant avgmax_mlp \
 --seed 42 \
 --device auto \
 --use_amp
@@ -77,6 +77,7 @@ uv run python -m vsdlm train \
 --num_blocks 4 \
 --arch_variant convnext \
 --head_variant transformer \
+--token_mixer_grid 2x3 \
 --seed 42 \
 --device auto \
 --use_amp

@@ -305,7 +305,16 @@ class _TokenMixerHead(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (batch, channels, height, width)
         h, w = self.grid
-        tokens = F.adaptive_avg_pool2d(x, (h, w)).flatten(2).transpose(1, 2)  # (batch, tokens, channels)
+        height, width = x.shape[-2], x.shape[-1]
+        if height % h != 0 or width % w != 0:
+            raise RuntimeError(
+                f"Feature map {height}x{width} is not divisible by requested token grid {h}x{w}. "
+                "Adjust --token_mixer_grid or image/architecture settings."
+            )
+        kernel_h = height // h
+        kernel_w = width // w
+        tokens = F.avg_pool2d(x, kernel_size=(kernel_h, kernel_w), stride=(kernel_h, kernel_w))
+        tokens = tokens.flatten(2).transpose(1, 2)  # (batch, tokens, channels)
         tokens = self.mixer(tokens)
         pooled = tokens.mean(dim=1)
         pooled = self.final_norm(pooled)
@@ -467,11 +476,11 @@ class VSDLM(nn.Module):
 
     def _pool_features(self, x: torch.Tensor) -> torch.Tensor:
         if self._head_variant == "avg":
-            return F.adaptive_avg_pool2d(x, 1).flatten(1)
+            return x.mean(dim=(-2, -1))
         if self._head_variant == "avgmax_mlp":
-            avg = F.adaptive_avg_pool2d(x, 1)
-            maxv = F.adaptive_max_pool2d(x, 1)
-            return torch.cat([avg, maxv], dim=1).flatten(1)
+            avg = x.mean(dim=(-2, -1))
+            maxv = torch.amax(x, dim=(-2, -1))
+            return torch.cat([avg, maxv], dim=1)
         raise ValueError(f"Pooling not defined for head variant: {self._head_variant}")
 
     def _ensure_token_grid(self, grid: Any) -> tuple[int, int]:
