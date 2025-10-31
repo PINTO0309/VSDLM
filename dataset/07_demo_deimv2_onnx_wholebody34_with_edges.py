@@ -15,6 +15,8 @@ import json
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass
@@ -141,7 +143,10 @@ class ResizeStatsCollector:
             json.dump(stats, fp, indent=2)
         print(Color.GREEN(f"[Resize Stats] Saved summary to {stats_path}"))
 
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+        fig: Figure
+        axes: Tuple[Axes, Axes]
+        fig, axes_tmp = plt.subplots(1, 2, figsize=(10, 4))
+        axes = tuple(axes_tmp)
         axes[0].hist(self.heights, bins=min(20, max(5, len(set(self.heights)))), color="#1f77b4", edgecolor="black")
         axes[0].set_title("Height distribution")
         axes[0].set_xlabel("Pixels")
