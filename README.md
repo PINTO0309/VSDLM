@@ -281,7 +281,7 @@ count=351473 | height mean=29.67px median=29.00px | width mean=48.00px median=48
 
 ## Citation
 
-If you use VSDLM in your research, please cite the Zenodo release:
+If you find this project useful, please consider citing:
 
 ```bibtex
 @software{hyodo2025vsdlm,
