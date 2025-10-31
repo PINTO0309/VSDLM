@@ -1,4 +1,6 @@
 # VSDLM
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17494543.svg)](https://doi.org/10.5281/zenodo.17494543) ![GitHub License](https://img.shields.io/github/license/pinto0309/vsdlm) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/PINTO0309/vsdlm)
+
 Visual-only speech detection driven by lip movements.
 
 There are countless situations where you can't hear the audio, and it's really frustrating.
