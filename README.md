@@ -37,7 +37,8 @@ uv run demo_vsdlm.py \
 -ep cuda
 
 uv run demo_vsdlm.py \
--v 0 -m deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx \
+-v 0 \
+-m deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx \
 -vm vsdlm_l.onnx \
 -ep tensorrt
 ```
