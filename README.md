@@ -279,7 +279,7 @@ count=351473 | height mean=29.67px median=29.00px | width mean=48.00px median=48
 
 ## Arch
 
-<img width="300" alt="vsdlm_s" src="https://github.com/user-attachments/assets/f2d42767-43f0-4433-ae62-882a70fb65cc" />
+<img width="300" alt="vsdlm_p" src="https://github.com/user-attachments/assets/1616215b-99f0-4c28-a1fa-b3dc647adf11" />
 
 ## Citation
 
