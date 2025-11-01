@@ -7,14 +7,14 @@ There are countless situations where you can't hear the audio, and it's really f
 
 https://github.com/user-attachments/assets/e204662f-dd54-4c19-8d9f-5a1fd8f4fab8
 
-|Variant|Size|F1|ONNX|
-|:-:|:-:|:-:|:-:|
-|P|112 KB|0.9502|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_p.onnx)|
-|N|176 KB|0.9586|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_n.onnx)|
-|S|494 KB|0.9696|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_s.onnx)|
-|C|875 KB|0.9777|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_c.onnx)|
-|M|1.7 MB|0.9801|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_m.onnx)|
-|L|6.4 MB|0.9891|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_l.onnx)|
+|Variant|Size|F1|CPU inference latency|ONNX|
+|:-:|:-:|:-:|-:|:-:|
+|P|112 KB|0.9502|0.18 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_p.onnx)|
+|N|176 KB|0.9586|0.31 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_n.onnx)|
+|S|494 KB|0.9696|0.50 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_s.onnx)|
+|C|875 KB|0.9777|0.60 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_c.onnx)|
+|M|1.7 MB|0.9801|0.70 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_m.onnx)|
+|L|6.4 MB|0.9891|0.91 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_l.onnx)|
 
 ## Inference
 
