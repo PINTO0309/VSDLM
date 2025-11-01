@@ -18,6 +18,15 @@ https://github.com/user-attachments/assets/9d68a0f0-b769-473d-8eeb-43ac7447c499
 |M|1.7 MB|0.9801|0.70 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_m.onnx)|
 |L|6.4 MB|0.9891|0.91 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_l.onnx)|
 
+## Setup
+
+```bash
+git clone https://github.com/PINTO0309/VSDLM.git && cd VSDLM
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+source .venv/bin/activate
+```
+
 ## Inference
 
 ```bash
