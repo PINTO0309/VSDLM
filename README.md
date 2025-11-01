@@ -7,6 +7,8 @@ There are countless situations where you can't hear the audio, and it's really f
 
 https://github.com/user-attachments/assets/e204662f-dd54-4c19-8d9f-5a1fd8f4fab8
 
+https://github.com/user-attachments/assets/9d68a0f0-b769-473d-8eeb-43ac7447c499
+
 |Variant|Size|F1|CPU<br>inference<br>latency|ONNX|
 |:-:|:-:|:-:|:-:|:-:|
 |P|112 KB|0.9502|0.18 ms|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_p.onnx)|
