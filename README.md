@@ -5,6 +5,8 @@ Visual-only speech detection driven by lip movements.
 
 There are countless situations where you can't hear the audio, and it's really frustrating.
 
+https://github.com/user-attachments/assets/e204662f-dd54-4c19-8d9f-5a1fd8f4fab8
+
 |Variant|Size|F1|ONNX|
 |:-:|:-:|:-:|:-:|
 |P|112 KB|0.9502|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_p.onnx)|
