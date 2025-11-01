@@ -5,8 +5,6 @@ Visual-only speech detection driven by lip movements.
 
 There are countless situations where you can't hear the audio, and it's really frustrating.
 
-https://github.com/user-attachments/assets/c1813290-e7a6-4ce1-b44d-4dcfad6f8837
-
 |Variant|Size|F1|ONNX|
 |:-:|:-:|:-:|:-:|
 |P|112 KB|0.9502|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_p.onnx)|
@@ -15,6 +13,21 @@ https://github.com/user-attachments/assets/c1813290-e7a6-4ce1-b44d-4dcfad6f8837
 |C|875 KB|0.9777|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_c.onnx)|
 |M|1.7 MB|0.9801|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_m.onnx)|
 |L|6.4 MB|0.9891|[Download](https://github.com/PINTO0309/VSDLM/releases/download/onnx/vsdlm_l.onnx)|
+
+## Inference
+
+```bash
+uv run demo_vsdlm.py \
+-v 0 \
+-m deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx \
+-vm vsdlm_l.onnx \
+-ep cuda
+
+uv run demo_vsdlm.py \
+-v 0 -m deimv2_dinov3_s_wholebody34_1750query_n_batch_640x640.onnx \
+-vm vsdlm_l.onnx \
+-ep tensorrt
+```
 
 ## Training Pipeline
 
