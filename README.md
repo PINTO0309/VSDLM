@@ -309,6 +309,12 @@ count=351473 | height mean=29.67px median=29.00px | width mean=48.00px median=48
 
 <img width="300" alt="vsdlm_p" src="https://github.com/user-attachments/assets/1616215b-99f0-4c28-a1fa-b3dc647adf11" />
 
+## Ultra-lightweight classification model series
+1. [VSDLM: Visual-only speech detection driven by lip movements](https://github.com/PINTO0309/VSDLM) - MIT License
+2. [OCEC: Open closed eyes classification. Ultra-fast wink and blink estimation model](https://github.com/PINTO0309/OCEC) - MIT License
+3. [PGC: Ultrafast pointing gesture classification](https://github.com/PINTO0309/PGC) - MIT License
+4. [SC: Ultrafast sitting classification](https://github.com/PINTO0309/SC) - MIT License
+
 ## Citation
 
 If you find this project useful, please consider citing:
