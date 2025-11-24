@@ -317,6 +317,7 @@ count=351473 | height mean=29.67px median=29.00px | width mean=48.00px median=48
 5. [PUC: Phone Usage Classifier is a three-class image classification pipeline for understanding how people
 interact with smartphones](https://github.com/PINTO0309/PUC) - MIT License
 6. [HSC: Happy smile classifier](https://github.com/PINTO0309/HSC) - MIT License
+7. [WHC: Waving Hand Classification](https://github.com/PINTO0309/WHC) - MIT License
 
 ## Citation
 
